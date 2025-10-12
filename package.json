@@ -2,12 +2,14 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev --experimental-https --experimental-https-key ./192.168.2.140+3-key.pem --experimental-https-cert ./192.168.2.140+3.pem",
+"scripts": {
+    "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "postbuild": "cp -r ./public ./.next/standalone/public && cp -r ./.next/static ./.next/standalone/.next/static",
+    "start": "node ./.next/standalone/server.js",
     "lint": "next lint"
   },
+  
   "dependencies": {
     "html5-qrcode": "^2.3.8",
     "next": "14.2.3",
