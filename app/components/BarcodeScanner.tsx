@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-
-// NOTE: The 'html5-qrcode' library is imported dynamically inside useEffect
-// to prevent server-side rendering errors in Next.js.
+// Html5Qrcodeを直接インポートして型として利用
+import type { Html5Qrcode, Html5QrcodeCameraScanConfig } from 'html5-qrcode';
 
 interface BarcodeScannerProps {
   onScan: (result: string) => void;
@@ -11,14 +10,13 @@ interface BarcodeScannerProps {
 }
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
-  // The ref will hold the instance of the scanner
-  const scannerRef = useRef<any | null>(null);
+  // スキャナーインスタンスの型を明示的に指定
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   useEffect(() => {
-    // Dynamically import the library only on the client side
+    // ライブラリを動的にインポート
     import('html5-qrcode').then(({ Html5Qrcode, Html5QrcodeSupportedFormats }) => {
       
-      // Ensure the scanner is only created once
       if (!scannerRef.current) {
         const html5QrCode = new Html5Qrcode(
           'reader', 
@@ -39,7 +37,7 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
         return;
       }
 
-      const config = {
+      const config: Html5QrcodeCameraScanConfig = {
         fps: 10,
         qrbox: { width: 250, height: 250 }
       };
@@ -48,60 +46,80 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
         if (qrCode && qrCode.isScanning) {
           qrCode.stop().then(() => {
             onScan(decodedText);
-          }).catch((err: unknown) => { // ← 修正 (任意ですがこちらも修正)
+          }).catch((err: unknown) => {
             console.error("Failed to stop scanner after success.", err);
-            onScan(decodedText); // Proceed even if stopping fails
+            onScan(decodedText);
           });
         }
       };
 
       const qrCodeErrorCallback = (errorMessage: string) => {
-        // Ignore scan errors
+        // スキャンエラーは無視
       };
 
-      // Function to start scanning
       const startScanning = async () => {
+        if (!qrCode) return;
+
         try {
-          // First, try to start with the rear camera (environment) for mobile devices
-          await qrCode.start(
-            { facingMode: "environment" },
-            config,
-            qrCodeSuccessCallback,
-            qrCodeErrorCallback
-          );
-        } catch (err: unknown) { // ← 修正 (エラー箇所1)
-          console.warn("Failed to start with rear camera. Trying default camera.", err);
-          // If rear camera fails (e.g., on a PC), try starting with any available camera
-          try {
+          // 1. 利用可能なカメラのリストを取得
+          const cameras = await Html5Qrcode.getCameras();
+
+          if (cameras && cameras.length) {
+            let cameraId: string | undefined = undefined;
+
+            // 2. 背面カメラ（'back' or 'environment'）を探す
+            const rearCamera = cameras.find(camera => 
+              camera.label.toLowerCase().includes('back') || 
+              (camera as any).facing === 'environment'
+            );
+
+            if (rearCamera) {
+              cameraId = rearCamera.id;
+              console.log(`Using rear camera: ${rearCamera.label}`);
+            } else {
+              // 3. 背面カメラがなければ、リストの最初のカメラを使用
+              cameraId = cameras[0].id;
+              console.log(`Rear camera not found. Using default camera: ${cameras[0].label}`);
+            }
+
+            // 4. 特定したカメラIDでスキャンを開始
             await qrCode.start(
-              undefined, // Use the default camera
+              cameraId,
               config,
               qrCodeSuccessCallback,
               qrCodeErrorCallback
             );
-          } catch (err2: unknown) { // ← 修正 (こちらも同様に)
-            console.error("Failed to start any camera.", err2);
-            onClose(); // Close the component if no camera can be started
+
+          } else {
+            // カメラが見つからない場合、デフォルト設定で試す（最終手段）
+            await qrCode.start(
+              {}, // ← 修正箇所: undefined から {} へ変更
+              config, 
+              qrCodeSuccessCallback, 
+              qrCodeErrorCallback
+            );
           }
+        } catch (err: unknown) {
+          console.error("Failed to start camera.", err);
+          onClose();
         }
       };
 
       startScanning();
 
-    }).catch((err: unknown) => { // ← 修正 (任意ですがこちらも修正)
+    }).catch((err: unknown) => {
       console.error("Failed to load html5-qrcode library", err);
     });
 
-    // Cleanup function when the component unmounts
+    // クリーンアップ
     return () => {
       const qrCode = scannerRef.current;
       if (qrCode && qrCode.isScanning) {
-        qrCode.stop().catch((err: unknown) => console.error("Failed to stop scanner on cleanup.", err)); // ← 修正 (エラー箇所2)
+        qrCode.stop().catch((err: unknown) => console.error("Failed to stop scanner on cleanup.", err));
       }
     };
   }, [onScan, onClose]);
 
-  // UI for the scanner modal
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
       <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
