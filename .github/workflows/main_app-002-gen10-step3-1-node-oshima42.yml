@@ -1,4 +1,4 @@
-name: Build and Deploy Next.js App to Azure Web App
+name: Build and Deploy Next.js Standalone App to Azure Web App
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nextjs-app
-          path: ./.next
+          path: ./.next/standalone/
 
   deploy:
     runs-on: ubuntu-latest
@@ -44,7 +44,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: nextjs-app
-          path: ./.next
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
@@ -52,5 +51,5 @@ jobs:
         with:
           app-name: 'app-002-gen10-step3-1-node-oshima42'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_765C... }} # 編集前のファイルから正しい値をコピーしてください
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_... }} # この値は、必ず編集前のファイルからコピーしてください
           package: .
