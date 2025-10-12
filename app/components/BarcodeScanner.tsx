@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-// Html5Qrcodeを直接インポートして型として利用
-import type { Html5Qrcode, Html5QrcodeCameraScanConfig } from 'html5-qrcode';
+// 型定義のためにインポート
+import type { Html5Qrcode, Html5QrcodeCameraScanConfig, QrCodeSuccessCallback, QrCodeErrorCallback } from 'html5-qrcode';
 
 interface BarcodeScannerProps {
   onScan: (result: string) => void;
@@ -10,113 +10,126 @@ interface BarcodeScannerProps {
 }
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
-  // スキャナーインスタンスの型を明示的に指定
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  // useEffect内での重複実行を防ぐためのフラグ
+  const isScanningStarted = useRef(false);
 
   useEffect(() => {
-    // ライブラリを動的にインポート
+    // ライブラリの動的インポート
     import('html5-qrcode').then(({ Html5Qrcode, Html5QrcodeSupportedFormats }) => {
       
-      if (!scannerRef.current) {
-        const html5QrCode = new Html5Qrcode(
-          'reader', 
-          {
-            formatsToSupport: [
-              Html5QrcodeSupportedFormats.EAN_13,
-              Html5QrcodeSupportedFormats.EAN_8,
-              Html5QrcodeSupportedFormats.QR_CODE
-            ],
-            verbose: false
-          }
-        );
-        scannerRef.current = html5QrCode;
-      }
-      
-      const qrCode = scannerRef.current;
-      if (!qrCode || qrCode.isScanning) {
+      const qrCode = scannerRef.current ?? new Html5Qrcode(
+        'reader', 
+        {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.QR_CODE
+          ],
+          verbose: false
+        }
+      );
+      scannerRef.current = qrCode;
+
+      if (qrCode.isScanning || isScanningStarted.current) {
         return;
       }
 
       const config: Html5QrcodeCameraScanConfig = {
         fps: 10,
-        qrbox: { width: 250, height: 250 }
+        qrbox: { width: 250, height: 250 },
+        // iPhoneでのスキャン成功率を向上させるための設定
+        aspectRatio: 1.0, 
       };
 
-      const qrCodeSuccessCallback = (decodedText: string) => {
-        if (qrCode && qrCode.isScanning) {
+      const qrCodeSuccessCallback: QrCodeSuccessCallback = (decodedText, decodedResult) => {
+        if (qrCode.isScanning) {
+          isScanningStarted.current = false; // スキャン終了
           qrCode.stop().then(() => {
             onScan(decodedText);
           }).catch((err: unknown) => {
-            console.error("Failed to stop scanner after success.", err);
+            console.error("スキャナーの停止に失敗しました。", err);
             onScan(decodedText);
           });
         }
       };
 
-      const qrCodeErrorCallback = (errorMessage: string) => {
+      const qrCodeErrorCallback: QrCodeErrorCallback = (errorMessage) => {
         // スキャンエラーは無視
       };
 
+      // === 新しいカメラ起動ロジック ===
       const startScanning = async () => {
-        if (!qrCode) return;
+        if (!qrCode || qrCode.isScanning) return;
+
+        // 一度スキャン開始処理が走ったら、重複して呼ばないようにする
+        isScanningStarted.current = true; 
 
         try {
-          // 1. 利用可能なカメラのリストを取得
-          const cameras = await Html5Qrcode.getCameras();
+          // --- 第1試行: facingMode: "environment" で背面カメラを要求 ---
+          console.log("第1試行: facingMode: 'environment' でカメラを起動します。");
+          await qrCode.start(
+            { facingMode: "environment" },
+            config,
+            qrCodeSuccessCallback,
+            qrCodeErrorCallback
+          );
+        } catch (err1) {
+          console.warn("facingMode: 'environment' での起動に失敗しました。フォールバックします。", err1);
 
-          if (cameras && cameras.length) {
-            let cameraId: string | undefined = undefined;
+          try {
+            // --- 第2試行: カメラリストを取得して背面カメラを探す ---
+            console.log("第2試行: カメラリストから背面カメラを探します。");
+            const cameras = await Html5Qrcode.getCameras();
+            if (cameras && cameras.length > 0) {
+              const rearCamera = cameras.find(camera => camera.label.toLowerCase().includes('back'));
+              let cameraIdToUse: string;
 
-            // 2. 背面カメラ（'back' or 'environment'）を探す
-            const rearCamera = cameras.find(camera => 
-              camera.label.toLowerCase().includes('back') || 
-              (camera as any).facing === 'environment'
-            );
-
-            if (rearCamera) {
-              cameraId = rearCamera.id;
-              console.log(`Using rear camera: ${rearCamera.label}`);
+              if (rearCamera) {
+                console.log("ラベルに 'back' を含むカメラが見つかりました。");
+                cameraIdToUse = rearCamera.id;
+              } else if (cameras.length > 1) {
+                console.log("ラベルに 'back' を含むカメラは見つかりませんでした。リストの最後のカメラを背面カメラと見なして使用します。");
+                cameraIdToUse = cameras[cameras.length - 1].id;
+              } else {
+                 console.log("カメラが1台のみ検出されました。そのカメラを使用します。");
+                cameraIdToUse = cameras[0].id;
+              }
+              
+              await qrCode.start(
+                cameraIdToUse,
+                config,
+                qrCodeSuccessCallback,
+                qrCodeErrorCallback
+              );
             } else {
-              // 3. 背面カメラがなければ、リストの最初のカメラを使用
-              cameraId = cameras[0].id;
-              console.log(`Rear camera not found. Using default camera: ${cameras[0].label}`);
+              // --- 第3試行: カメラリストが取得できない場合、デフォルトで試す ---
+               console.log("第3試行: カメラリストが空です。デフォルト設定でカメラを起動します。");
+               await qrCode.start({}, config, qrCodeSuccessCallback, qrCodeErrorCallback);
             }
-
-            // 4. 特定したカメラIDでスキャンを開始
-            await qrCode.start(
-              cameraId,
-              config,
-              qrCodeSuccessCallback,
-              qrCodeErrorCallback
-            );
-
-          } else {
-            // カメラが見つからない場合、デフォルト設定で試す（最終手段）
-            await qrCode.start(
-              {}, // ← 修正箇所: undefined から {} へ変更
-              config, 
-              qrCodeSuccessCallback, 
-              qrCodeErrorCallback
-            );
+          } catch (err2) {
+            console.error("全てのカメラ起動の試行に失敗しました。", err2);
+            isScanningStarted.current = false;
+            onClose(); // ユーザーにエラーを通知し、モーダルを閉じる
           }
-        } catch (err: unknown) {
-          console.error("Failed to start camera.", err);
-          onClose();
         }
       };
-
+      
       startScanning();
 
     }).catch((err: unknown) => {
-      console.error("Failed to load html5-qrcode library", err);
+      console.error("html5-qrcodeライブラリの読み込みに失敗しました。", err);
     });
 
-    // クリーンアップ
+    // コンポーネントがアンマウントされる際のクリーンアップ処理
     return () => {
       const qrCode = scannerRef.current;
       if (qrCode && qrCode.isScanning) {
-        qrCode.stop().catch((err: unknown) => console.error("Failed to stop scanner on cleanup.", err));
+        qrCode.stop().catch((err: unknown) => {
+          console.error("クリーンアップ中のスキャナー停止に失敗しました。", err);
+        });
       }
+      isScanningStarted.current = false;
     };
   }, [onScan, onClose]);
 
