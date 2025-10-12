@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+
+// NOTE: The 'html5-qrcode' library is imported dynamically inside useEffect
+// to prevent server-side rendering errors in Next.js.
 
 interface BarcodeScannerProps {
   onScan: (result: string) => void;
@@ -9,93 +11,103 @@ interface BarcodeScannerProps {
 }
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
-  // Html5Qrcodeのインスタンスを保持するためのref
-  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  // The ref will hold the instance of the scanner
+  const scannerRef = useRef<any | null>(null);
 
   useEffect(() => {
-    // スキャナのインスタンスを作成する関数
-    const createScanner = () => {
-      // 既にインスタンスがあれば何もしない
-      if (html5QrCodeRef.current) {
+    // Dynamically import the library only on the client side
+    import('html5-qrcode').then(({ Html5Qrcode, Html5QrcodeSupportedFormats }) => {
+      
+      // Ensure the scanner is only created once
+      if (!scannerRef.current) {
+        const html5QrCode = new Html5Qrcode(
+          'reader', 
+          {
+            formatsToSupport: [
+              Html5QrcodeSupportedFormats.EAN_13,
+              Html5QrcodeSupportedFormats.EAN_8,
+              Html5QrcodeSupportedFormats.QR_CODE
+            ],
+            verbose: false
+          }
+        );
+        scannerRef.current = html5QrCode;
+      }
+      
+      const qrCode = scannerRef.current;
+      if (!qrCode || qrCode.isScanning) {
         return;
       }
-      // UIを持たない低レベルなスキャナインスタンスを生成
-      const qrCode = new Html5Qrcode(
-        'reader', 
-        // ▼▼▼【エラー修正箇所】▼▼▼
-        // ライブラリの仕様でverboseプロパティが必須のため追加します
-        {
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.QR_CODE
-          ],
-          verbose: false
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 250 }
+      };
+
+      const qrCodeSuccessCallback = (decodedText: string) => {
+        if (qrCode && qrCode.isScanning) {
+          qrCode.stop().then(() => {
+            onScan(decodedText);
+          }).catch((err: unknown) => { // ← 修正 (任意ですがこちらも修正)
+            console.error("Failed to stop scanner after success.", err);
+            onScan(decodedText); // Proceed even if stopping fails
+          });
         }
-      );
-      html5QrCodeRef.current = qrCode;
-    };
+      };
 
-    // カメラを起動してスキャンを開始する非同期関数
-    const startScan = async () => {
-      createScanner();
-      const qrCode = html5QrCodeRef.current;
-      if (!qrCode) return;
+      const qrCodeErrorCallback = (errorMessage: string) => {
+        // Ignore scan errors
+      };
 
-      try {
-        const cameras = await Html5Qrcode.getCameras();
-        if (cameras && cameras.length) {
-          // 背面カメラ('back' or 'rear')を優先的に選択、なければ最初のカメラを使用
-          const cameraId = cameras.find(camera => camera.label.toLowerCase().includes('back') || camera.label.toLowerCase().includes('rear'))?.id || cameras[0].id;
-          
-          // カメラを直接起動
+      // Function to start scanning
+      const startScanning = async () => {
+        try {
+          // First, try to start with the rear camera (environment) for mobile devices
           await qrCode.start(
-            cameraId,
-            {
-              fps: 10,
-              qrbox: { width: 250, height: 250 }
-            },
-            (decodedText, decodedResult) => {
-              // スキャン成功時の処理
-              if (qrCode.isScanning) {
-                  // 成功したら即座にスキャンを停止
-                  qrCode.stop();
-              }
-              onScan(decodedText);
-            },
-            (errorMessage) => {
-              // スキャン中の解析エラーは無視
-            }
+            { facingMode: "environment" },
+            config,
+            qrCodeSuccessCallback,
+            qrCodeErrorCallback
           );
-        } else {
-          console.error("カメラが見つかりませんでした。");
-          onClose(); // カメラがない場合は閉じる
+        } catch (err: unknown) { // ← 修正 (エラー箇所1)
+          console.warn("Failed to start with rear camera. Trying default camera.", err);
+          // If rear camera fails (e.g., on a PC), try starting with any available camera
+          try {
+            await qrCode.start(
+              undefined, // Use the default camera
+              config,
+              qrCodeSuccessCallback,
+              qrCodeErrorCallback
+            );
+          } catch (err2: unknown) { // ← 修正 (こちらも同様に)
+            console.error("Failed to start any camera.", err2);
+            onClose(); // Close the component if no camera can be started
+          }
         }
-      } catch (error) {
-        console.error("カメラの起動に失敗しました。", error);
-        onClose(); // 起動に失敗した場合も閉じる
-      }
-    };
+      };
 
-    startScan();
+      startScanning();
 
-    // コンポーネントが閉じられる際のクリーンアップ処理
+    }).catch((err: unknown) => { // ← 修正 (任意ですがこちらも修正)
+      console.error("Failed to load html5-qrcode library", err);
+    });
+
+    // Cleanup function when the component unmounts
     return () => {
-      const qrCode = html5QrCodeRef.current;
+      const qrCode = scannerRef.current;
       if (qrCode && qrCode.isScanning) {
-        qrCode.stop().catch(err => console.error("クリーンアップ中のスキャナ停止に失敗しました。", err));
+        qrCode.stop().catch((err: unknown) => console.error("Failed to stop scanner on cleanup.", err)); // ← 修正 (エラー箇所2)
       }
     };
   }, [onScan, onClose]);
 
-  // コンポーネントのUI部分
+  // UI for the scanner modal
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
       <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
         <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
           バーコードをスキャン
         </h3>
-        {/* カメラ映像がここに直接表示される */}
         <div className="w-full aspect-square rounded-lg overflow-hidden mb-4 border-2 border-gray-300">
           <div id="reader" />
         </div>
@@ -109,4 +121,3 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
     </div>
   );
 }
-
