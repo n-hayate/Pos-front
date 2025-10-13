@@ -2,43 +2,58 @@ name: Deploy Next.js App to Azure
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
-      # 1. ソースコードをチェックアウト
-      - name: 'Checkout Github Action'
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Node.jsの環境を準備
-      - name: 'Set up Node.js'
-        uses: actions/setup-node@v3
+      - name: Use Node.js 22.x  # ← App Service の実行環境に合わせる（18 推奨）
+        uses: actions/setup-node@v4
         with:
-          # ▼▼▼【修正点】Azureの環境に合わせて22.xに変更▼▼▼
           node-version: '22.x'
+          cache: 'npm'
 
-      # 3. 依存パッケージをインストール
-      - name: 'Install dependencies'
-        run: npm install
+      - name: Install deps
+        run: npm ci
 
-      # 4. Next.jsアプリをビルド
-      - name: 'Build the application'
+      - name: Build (Next.js standalone)
         run: npm run build
+        # npm は build 後に postbuild を自動実行
+        # （.next/static と public が .next/standalone 配下にコピーされる想定）
 
-      # 5. 完成品（.next/standaloneの中身）をZIPファイルに固める
-      - name: 'Zip artifact for deployment'
+      # 念のため二重保険：postbuildが失敗しても静的資産を同梱
+      - name: Ensure static & public in standalone
         run: |
-          cd ./.next/standalone
+          mkdir -p .next/standalone/.next/static
+          rsync -a .next/static/ .next/standalone/.next/static/ || true
+          if [ -d "public" ]; then rsync -a public/ .next/standalone/public/; fi
+
+      # 起動に package.json は不要（server.js 直叩き）。が、ログ用に置きたい場合は以下で生成してもOK
+      # - name: Add minimal package.json (optional)
+      #   run: |
+      #     cat > .next/standalone/package.json <<'JSON'
+      #     {
+      #       "name": "next-standalone",
+      #       "private": true,
+      #       "scripts": { "start": "node server.js" }
+      #     }
+      #     JSON
+
+      - name: Zip artifact (root = server.js がある場所)
+        run: |
+          cd .next/standalone
           zip -r ../../deployment.zip .
-      
-      # 6. 完成品のZIPファイルだけをAzureにデプロイする
-      - name: 'Deploy to Azure Web App'
+
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
-          app-name: 'app-002-gen10-step3-1-node-oshima42'
+          app-name: app-002-gen10-step3-1-node-oshima42
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: './deployment.zip'
+          package: ./deployment.zip
+          enable-oryx-build: false   # ← 重要（Oryx を使わない）
