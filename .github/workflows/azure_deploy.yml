@@ -10,67 +10,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ ソースコードを取得
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2️⃣ Node.js 環境を設定（安定の 18.x）
-      - name: Use Node.js 18.x
+      - name: Use Node.js 22.x
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
+          node-version: '22.x'
           cache: 'npm'
 
-      # 3️⃣ パッケージをインストール
       - name: Install dependencies
         run: npm ci
 
-      # 4️⃣ Next.js をビルド（環境変数を注入）
       - name: Build (Next.js standalone)
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: "https://app-002-gen10-step3-1-py-oshima42.azurewebsites.net"
 
-      # 5️⃣ ビルド成果物をリリース用フォルダにまとめる
+      # 必要ファイルを release/ に集める（server.js を ZIP のルートに置く）
       - name: Assemble release folder
         run: |
           set -e
           rm -rf release
           mkdir -p release
-
-          # ① standalone の本体
+          # server.js など（standalone本体）
           cp -R .next/standalone/* release/
-
-          # ② static と BUILD_ID（必須）
+          # Next が要求する .next/static と BUILD_ID
           mkdir -p release/.next
           cp -R .next/static release/.next/static
           if [ -f ".next/BUILD_ID" ]; then cp .next/BUILD_ID release/.next/BUILD_ID; fi
+          # （保険）存在するなら server ディレクトリも
           if [ -d ".next/server" ]; then cp -R .next/server release/.next/server; fi
-
-          # ③ public があれば追加
+          # public があれば
           if [ -d "public" ]; then cp -R public release/public; fi
 
-      # 6️⃣ 成果物の中身を確認（デバッグ用・任意）
-      - name: Inspect release contents
-        run: |
-          echo "== release root =="
-          ls -la release | sed -n '1,120p'
-          echo "== release/.next =="
-          ls -la release/.next | sed -n '1,120p'
-          echo "== release/.next/static/chunks (一部) =="
-          ls -la release/.next/static/chunks | sed -n '1,120p' || true
-
-      # 7️⃣ ZIP 化
       - name: Zip artifact
         run: |
           cd release
           zip -r ../deployment.zip .
 
-      # 8️⃣ Azure App Service にデプロイ
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: app-002-gen10-step3-1-node-oshima42
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: ./deployment.zip
-          enable-oryx-build: false
+          # ↓ enable-oryx-build は無効な入力。入れない。
+          # startup-command を明示しておくと安全
+          startup-command: "node server.js"
