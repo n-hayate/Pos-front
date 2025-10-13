@@ -3,7 +3,7 @@ module.exports = {
   output: 'standalone',
   reactStrictMode: false,
   async rewrites() {
-    // Azureなどで /_next が /next に変換されるケース対策
+    // 万一、上流で /_next → /next に変換されても拾えるように
     return [{ source: '/next/:path*', destination: '/_next/:path*' }];
   },
 };
