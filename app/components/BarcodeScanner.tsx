@@ -25,40 +25,31 @@ export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps)
     if (!isProcessingRef.current) {
       animationFrameRef.current = requestAnimationFrame(scanLoop);
     }
-
     if (!videoRef.current) return;
     const video = videoRef.current;
-
     if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0) {
       return;
     }
-
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
-
     const canvas = canvasRef.current ?? (canvasRef.current = document.createElement("canvas"));
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
-
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
     try {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const results: ZBarSymbol[] = await scanImageData(imageData);
-
       if (results.length > 0) {
         const rawData = results[0].data;
         let scannedCode: string;
-
         if (typeof rawData === 'string') {
           scannedCode = rawData;
         } else {
           scannedCode = new TextDecoder('utf-8').decode(rawData);
         }
         scannedCode = scannedCode.trim();
-
         if (scannedCode && isValidJAN(scannedCode)) {
           const now = Date.now();
           if (now - lastScannedTimeRef.current >= SCAN_INTERVAL) {
@@ -77,28 +68,40 @@ export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps)
 
   // カメラを起動する関数
   const startScanning = async () => {
+    let mediaStream: MediaStream | null = null;
     try {
-      // ▼▼▼ ここが最終修正点です ▼▼▼
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { exact: "environment" }, // "ideal" から "exact" へ変更
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-      // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+      // ▼▼▼ ここからが最終修正箇所です ▼▼▼
+      const videoConstraints: MediaTrackConstraints = {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      };
 
-      if (videoRef.current) {
+      try {
+        // Step 1: まず最も厳格な `exact` で背面カメラを試す
+        console.log("Attempting to get rear camera with 'exact' constraint...");
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { ...videoConstraints, facingMode: { exact: "environment" } },
+          audio: false,
+        });
+      } catch (err) {
+        // Step 2: `exact` が失敗した場合、より緩やかな指定で再試行する
+        console.warn("'exact: environment' failed, falling back to 'environment'...", err);
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { ...videoConstraints, facingMode: "environment" },
+          audio: false,
+        });
+      }
+      // ▲▲▲ ここまでが最終修正箇所です ▲▲▲
+
+      if (videoRef.current && mediaStream) {
         videoRef.current.srcObject = mediaStream;
         videoRef.current.play();
+        setStream(mediaStream);
+        animationFrameRef.current = requestAnimationFrame(scanLoop);
       }
-      setStream(mediaStream);
-
-      animationFrameRef.current = requestAnimationFrame(scanLoop);
     } catch (err) {
       console.error("カメラの起動に失敗しました:", err);
-      onError?.("背面カメラの起動に失敗しました。カメラの権限が許可されているか確認してください。");
+      onError?.("カメラの起動に失敗しました。カメラの権限が許可されているか確認してください。");
     }
   };
 
