@@ -12,7 +12,6 @@ export default function PosPage() {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [totalAmount, setTotalAmount] = useState(0);
-  const [isTestModeOpen, setIsTestModeOpen] = useState(false); // 診断モード用のState
 
   // --- デバッグ機能 ---
   const [logs, setLogs] = useState<string[]>([]);
@@ -32,14 +31,15 @@ export default function PosPage() {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
   }, []);
-
+  
   const handleScan = useCallback(async (result: string) => {
-    setIsScannerOpen(false);
-    addLog(`スキャン結果: ${result}`);
-    addLog(`APIサーバーに商品を問い合わせています...`);
-    addLog(`宛先URL: ${process.env.NEXT_PUBLIC_API_URL}/search_product`);
+    // 💡【修正点】スキャナを閉じる処理をここに集約
+    setIsScannerOpen(false); 
+    addLog(`スキャン成功: ${result}`);
     
+    // スキャン後の商品検索ロジックは変更なし
     try {
+      addLog(`APIサーバーに商品を問い合わせています...`);
       const data = await searchProduct(result);
       addLog(`API Response Body: ${JSON.stringify(data, null, 2)}`);
       
@@ -53,13 +53,7 @@ export default function PosPage() {
     } catch (error: any) {
         showNotification('商品検索でエラーが発生しました', 'error');
         addLog(`[CRITICAL ERROR] API通信に失敗しました。`);
-        addLog(`[ERROR DETAIL] ${JSON.stringify({
-            message: error.message,
-            name: error.name,
-            stack: error.stack,
-            cause: error.cause,
-            ...error
-        }, null, 2)}`);
+        addLog(`[ERROR DETAIL] ${JSON.stringify({ message: error.message, name: error.name, ...error }, null, 2)}`);
         setScannedProduct(null);
     }
   }, [addLog, showNotification]);
@@ -105,55 +99,33 @@ export default function PosPage() {
        addLog(`[ERROR DETAIL] ${JSON.stringify(error, null, 2)}`);
     }
   };
-
-  // ▼▼▼ 診断用のロジック ▼▼▼
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [testLogs, setTestLogs] = useState<string[]>(['ログ:']);
-
-  const addTestLog = (message: string) => {
-      setTestLogs(prev => [...prev, `- ${message}`]);
-  };
-
-  const startTestCamera = async () => {
-      addTestLog('ボタンがクリックされました。');
-      const constraints = { video: { facingMode: "environment" } };
-      addTestLog(`Constraints: ${JSON.stringify(constraints)}`);
-
-      try {
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          addTestLog('✅ ストリームの取得に成功！');
-          if (videoRef.current) {
-              videoRef.current.srcObject = stream;
-          }
-      } catch (err: any) {
-          addTestLog(`❌ エラー: ${err.name} - ${err.message}`);
-          alert(`カメラ起動に失敗: ${err.name}`);
-      }
-  };
   
   return (
     <div className="container mx-auto p-4 bg-gray-50 min-h-screen">
       {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
       
+      {/* ▼▼▼ ここから修正 ▼▼▼ */}
       {isScannerOpen && (
-        <BarcodeScanner
-          onScan={handleScan}
-          onClose={() => setIsScannerOpen(false)}
-        />
-      )}
-
-      {/* ▼▼▼ 診断モードのUI ▼▼▼ */}
-      {isTestModeOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex flex-col items-center justify-center p-4">
+        // ポップアップ画面のUIをここで定義する
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
-            <h3 className="text-xl font-bold mb-4 text-center text-gray-800">カメラAPI 直接診断</h3>
-            <video ref={videoRef} playsInline autoPlay muted className="w-full aspect-square bg-gray-900 border-2 border-gray-300 rounded-lg" />
-            <button onClick={startTestCamera} className="w-full mt-4 px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg">カメラ起動</button>
-            <button onClick={() => setIsTestModeOpen(false)} className="w-full mt-2 px-4 py-2 bg-gray-500 text-white font-semibold rounded-lg">閉じる</button>
-            <pre className="mt-4 p-2 bg-gray-100 text-xs h-24 overflow-y-auto whitespace-pre-wrap">{testLogs.join('\n')}</pre>
+             <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
+               バーコードをスキャン
+             </h3>
+            <BarcodeScanner
+              onScan={handleScan}
+              onError={(error) => addLog(`[SCANNER ERROR] ${error}`)}
+            />
+            <button
+              onClick={() => setIsScannerOpen(false)}
+              className="w-full mt-4 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors transform active:scale-95"
+            >
+              キャンセル
+            </button>
           </div>
         </div>
       )}
+      {/* ▲▲▲ ここまで修正 ▲▲▲ */}
 
       <header className="text-center mb-8">
         <h1 className="text-4xl font-extrabold text-gray-800">モバイルPOSアプリ</h1>
@@ -218,12 +190,6 @@ export default function PosPage() {
       </main>
       
       <footer className="max-w-2xl mx-auto mt-4">
-        <button
-          onClick={() => setIsTestModeOpen(true)}
-          className="w-full text-sm text-white bg-orange-600 hover:bg-orange-700 py-2 px-4 rounded-lg mb-2"
-        >
-          カメラAPI 直接診断モード
-        </button>
         <button 
           onClick={() => setShowDebug(!showDebug)}
           className="w-full text-sm text-gray-600 bg-gray-200 hover:bg-gray-300 py-2 px-4 rounded-lg"

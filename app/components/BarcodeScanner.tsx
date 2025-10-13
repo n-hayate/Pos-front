@@ -1,95 +1,147 @@
-'use client';
+"use client";
 
-import { useEffect, useRef } from 'react';
-import type { Html5Qrcode } from 'html5-qrcode';
+import { useEffect, useRef, useState } from "react";
+import { scanImageData, ZBarSymbol } from "@undecaf/zbar-wasm";
 
 interface BarcodeScannerProps {
-  onScan: (result: string) => void;
-  onClose: () => void;
+  onScan?: (janCode: string) => void;
+  onError?: (error: string) => void;
 }
 
-export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
-  // useEffectの2回実行を防ぐための useRef。Strict Mode対策として有効です。
-  const scannerInitialized = useRef(false);
+export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const isProcessingRef = useRef(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const lastScannedTimeRef = useRef<number>(0);
+  const SCAN_INTERVAL = 1000; // 連続スキャンを防ぐ間隔 (ミリ秒)
 
-  useEffect(() => {
-    if (scannerInitialized.current) {
+  // JANコードが正しい形式（8桁 or 13桁）かチェックする関数
+  const isValidJAN = (code: string): boolean => /^(\d{8}|\d{13})$/.test(code);
+
+  // カメラからの映像をフレームごとに解析するメインループ
+  const scanLoop = async () => {
+    // 処理中でなければ次のフレームをリクエスト
+    if (!isProcessingRef.current) {
+      animationFrameRef.current = requestAnimationFrame(scanLoop);
+    }
+
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+
+    // カメラ映像がまだ準備できていなければ、次のフレームで再試行
+    if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0) {
       return;
     }
-    scannerInitialized.current = true;
 
-    let html5QrCode: Html5Qrcode | undefined;
+    // 処理の重複を防ぐ
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
 
-    const setupAndStartScanner = async () => {
-      try {
-        // ライブラリを動的にインポート
-        const { Html5Qrcode } = await import('html5-qrcode');
+    // 映像を裏側のCanvasに描画
+    const canvas = canvasRef.current ?? (canvasRef.current = document.createElement("canvas"));
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
 
-        const scannerElement = document.getElementById('reader');
-        if (!scannerElement) {
-          throw new Error("スキャナ用のDOM要素 '#reader' が見つかりません。");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Canvasの画像データを取得してバーコードをスキャン
+    try {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const results: ZBarSymbol[] = await scanImageData(imageData);
+
+      if (results.length > 0) {
+        const rawData = results[0].data;
+        let scannedCode: string;
+
+        // ライブラリからのデータが文字列かバイナリかを判定して変換
+        if (typeof rawData === 'string') {
+          scannedCode = rawData;
+        } else {
+          scannedCode = new TextDecoder('utf-8').decode(rawData);
         }
+        scannedCode = scannedCode.trim();
 
-        html5QrCode = new Html5Qrcode(scannerElement.id);
-
-        // 💡【修正点】カメラIDを自前で探すのをやめ、facingModeで背面カメラを直接指定する
-        await html5QrCode.start(
-          { facingMode: { exact: "environment" } },  // "environment" は背面カメラを指す標準的な方法
-          {
-            fps: 10,
-            qrbox: { width: 250, height: 250 },
-            aspectRatio: 1.0, // UIと合わせるためアスペクト比を1:1に設定するとより安定します
-          },
-          (decodedText) => {
-            // スキャン成功時の処理
-            if (html5QrCode?.isScanning) {
-              html5QrCode.stop().then(() => onScan(decodedText)).catch(err => {
-                  console.error("スキャナの停止に失敗しましたが、結果を処理します。", err);
-                  onScan(decodedText);
-              });
-            }
-          },
-          (errorMessage) => { 
-            // QRコード/バーコードが認識できないフレーム毎のエラーは無視
+        // 正しいJANコードだった場合のみ処理
+        if (scannedCode && isValidJAN(scannedCode)) {
+          const now = Date.now();
+          // 短時間に同じコードを何度も読み取らないように制御
+          if (now - lastScannedTimeRef.current >= SCAN_INTERVAL) {
+            lastScannedTimeRef.current = now;
+            onScan?.(scannedCode);
           }
-        );
-
-      } catch (err) {
-        console.error("カメラのセットアップ中に致命的なエラーが発生:", err);
-        const message = err instanceof Error ? err.message : "カメラの起動に失敗しました。";
-        // ユーザーに分かりやすいエラーメッセージを表示
-        alert(`カメラの起動に失敗しました。\n\nお手数ですが、サイトにカメラのアクセス許可が与えられているか設定をご確認ください。`);
-        onClose();
+        }
       }
-    };
+    } catch (e) {
+      console.error("スキャン処理中にエラーが発生しました:", e);
+      onError?.("スキャン処理中にエラーが発生しました。");
+    } finally {
+      isProcessingRef.current = false;
+    }
+  };
 
-    setupAndStartScanner();
+  // カメラを起動する関数
+  const startScanning = async () => {
+    try {
+      // 背面カメラを優先して映像を取得
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" }, // "environment"が背面カメラ
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
 
-    // コンポーネントがアンマウントされる際のクリーンアップ処理
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+        videoRef.current.play();
+      }
+      setStream(mediaStream);
+
+      // スキャンループを開始
+      animationFrameRef.current = requestAnimationFrame(scanLoop);
+    } catch (err) {
+      console.error("カメラの起動に失敗しました:", err);
+      onError?.("カメラの起動に失敗しました。サイトの権限を確認してください。");
+    }
+  };
+
+  // カメラを停止する関数
+  const stopScanning = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+  };
+
+  // コンポーネントが表示されたらカメラを起動し、消えたら停止する
+  useEffect(() => {
+    startScanning();
     return () => {
-      if (html5QrCode?.isScanning) {
-        html5QrCode.stop().catch(err => {
-          console.error("クリーンアップ中のスキャナ停止に失敗", err);
-        });
-      }
+      stopScanning();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // 依存配列を空にして、初回マウント時のみ実行されるようにする
+  }, []);
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-      <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
-        <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
-          バーコードをスキャン
-        </h3>
-        {/* スキャナが表示される領域 */}
-        <div id="reader" className="w-full aspect-square rounded-lg overflow-hidden border-2 border-gray-300 bg-gray-100" />
-        <button
-          onClick={onClose}
-          className="w-full mt-4 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors transform active:scale-95"
-        >
-          キャンセル
-        </button>
+    <div className="w-full relative">
+      <video
+        ref={videoRef}
+        className="w-full h-60 bg-gray-900 rounded-lg object-cover"
+        autoPlay
+        muted
+        playsInline
+      />
+      {/* スキャン範囲を示すためのガイドUI */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-11/12 h-2/5 border-4 border-red-500 border-dashed rounded-lg opacity-75"></div>
+        <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-red-500"></div>
       </div>
     </div>
   );
