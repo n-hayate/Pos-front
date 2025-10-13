@@ -18,13 +18,14 @@ jobs:
       - name: 'Set up Node.js'
         uses: actions/setup-node@v3
         with:
-          node-version: '22.x' # package.jsonに合わせる
+          # ▼▼▼【修正点】Azureの環境に合わせて22.xに変更▼▼▼
+          node-version: '22.x'
 
-      # 3. 依存パッケージをインストール（★重要★）
+      # 3. 依存パッケージをインストール
       - name: 'Install dependencies'
         run: npm install
 
-      # 4. Next.jsアプリをビルドして完成品を作る（★重要★）
+      # 4. Next.jsアプリをビルド
       - name: 'Build the application'
         run: npm run build
 
