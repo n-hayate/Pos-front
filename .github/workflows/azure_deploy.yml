@@ -10,37 +10,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ ソースコードを取得
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js 22.x   # ← まずは安定の 18 に
+      # 2️⃣ Node.js 環境を設定（安定の 18.x）
+      - name: Use Node.js 18.x
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '18.x'
           cache: 'npm'
 
-      - name: Install deps
+      # 3️⃣ パッケージをインストール
+      - name: Install dependencies
         run: npm ci
 
+      # 4️⃣ Next.js をビルド（環境変数を注入）
       - name: Build (Next.js standalone)
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: "https://app-002-gen10-step3-1-py-oshima42.azurewebsites.net"
 
-      # ---- リリース用ディレクトリに必要物を集約 ----
+      # 5️⃣ ビルド成果物をリリース用フォルダにまとめる
       - name: Assemble release folder
         run: |
+          set -e
           rm -rf release
           mkdir -p release
-          # 1) standalone 本体（server.js など）をコピー
+
+          # ① standalone の本体
           cp -R .next/standalone/* release/
-          # 2) 静的チャンクを server.js と同階層の .next/ 配下へ
+
+          # ② static と BUILD_ID（必須）
           mkdir -p release/.next
           cp -R .next/static release/.next/static
-          # 3) public があれば（画像/アイコン等）
+          if [ -f ".next/BUILD_ID" ]; then cp .next/BUILD_ID release/.next/BUILD_ID; fi
+          if [ -d ".next/server" ]; then cp -R .next/server release/.next/server; fi
+
+          # ③ public があれば追加
           if [ -d "public" ]; then cp -R public release/public; fi
 
-      # ---- 中身を確認（デバッグ用・必要なら消してOK）----
+      # 6️⃣ 成果物の中身を確認（デバッグ用・任意）
       - name: Inspect release contents
         run: |
           echo "== release root =="
@@ -50,11 +60,13 @@ jobs:
           echo "== release/.next/static/chunks (一部) =="
           ls -la release/.next/static/chunks | sed -n '1,120p' || true
 
+      # 7️⃣ ZIP 化
       - name: Zip artifact
         run: |
           cd release
           zip -r ../deployment.zip .
 
+      # 8️⃣ Azure App Service にデプロイ
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
