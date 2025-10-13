@@ -1,4 +1,4 @@
-name: Deploy Next.js App to Azure
+name: Deploy Next.js App to Azure (Windows, no-web.config, Oryx build)
 
 on:
   push:
@@ -6,61 +6,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js 20.x   # ← ビルドは 22 のまま（あなたの希望を維持）
+      # CI は 22 ベースのままでOK（要求に沿う）
+      - name: Use Node.js 22.x
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '22.x'
           cache: 'npm'
 
-      - name: Install dependencies
+      # 依存だけ入れて型/リンタ確認したい場合はこの2行を入れてもOK（なくても可）
+      - name: Install deps (optional)
         run: npm ci
 
-      - name: Build (Next.js standalone)
-        run: npm run build
-        env:
-          NEXT_PUBLIC_API_URL: "https://app-002-gen10-step3-1-py-oshima42.azurewebsites.net"
+      # ★ビルドはしない★ → Oryx が App Service 側で実行し、web.config も自動生成
+      # Next の環境変数は App Service の「構成」に置いたものがビルド時に使われる
 
-      - name: Assemble release folder (Windows)
-        run: |
-          set -e
-          rm -rf release
-          mkdir -p release
-          # standalone 一式（server.js がここに来る）
-          cp -R .next/standalone/* release/
-          # Next が要求する .next/static と BUILD_ID
-          mkdir -p release/.next
-          cp -R .next/static release/.next/static
-          if [ -f ".next/BUILD_ID" ]; then cp .next/BUILD_ID release/.next/BUILD_ID; fi
-          # public があれば追加
-          if [ -d "public" ]; then cp -R public release/public; fi
-          # Windows 用 web.config を ZIP ルートへ
-          if [ -f "web.config" ]; then cp web.config release/web.config; fi
-
-      - name: Inspect release contents (debug)
-        run: |
-          echo "== release root =="
-          ls -la release | sed -n '1,200p'
-          echo "== release/.next =="
-          ls -la release/.next | sed -n '1,200p'
-          echo "== chunks =="
-          ls -la release/.next/static/chunks | sed -n '1,200p' || true
-
-      - name: Zip artifact
-        run: |
-          cd release
-          zip -r ../deployment.zip .
-
-      - name: Deploy to Azure Web App (Windows)
+      - name: Deploy to Azure Web App (ZipDeploy of the repo)
         uses: azure/webapps-deploy@v2
         with:
           app-name: app-002-gen10-step3-1-node-oshima42
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: ./deployment.zip
-          # startup-command は Windows では無効なので指定しない
+          package: .
