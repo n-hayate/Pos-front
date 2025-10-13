@@ -1,9 +1,6 @@
 "use client";
 
-// ▼▼▼【修正点】useCallback を import に追加 ▼▼▼
 import { useEffect, useRef, useState, useCallback } from "react";
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
 import { scanImageData, ZBarSymbol } from "@undecaf/zbar-wasm";
 
 interface BarcodeScannerProps {
@@ -24,9 +21,13 @@ export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps)
   const isValidJAN = (code: string): boolean => /^(\d{8}|\d{13})$/.test(code);
 
   const scanLoop = async () => {
+    // requestAnimationFrameの呼び出しをループの最初に移動
+    if (videoRef.current && stream) {
+        animationFrameRef.current = requestAnimationFrame(scanLoop);
+    }
+
     if (!videoRef.current || !stream) return;
-    animationFrameRef.current = requestAnimationFrame(scanLoop);
-    
+
     const video = videoRef.current;
     if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0) return;
     if (isProcessingRef.current) return;
@@ -92,7 +93,7 @@ export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps)
       }
       if (videoRef.current && mediaStream) {
         videoRef.current.srcObject = mediaStream;
-        videoRef.current.play();
+        await videoRef.current.play();
         setStream(mediaStream);
         animationFrameRef.current = requestAnimationFrame(scanLoop);
       }
@@ -100,15 +101,16 @@ export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps)
       console.error("カメラ起動失敗:", err);
       onError?.("カメラの起動に失敗しました。権限を確認してください。");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [onScan, onError]);
 
   const stopScanning = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
+      setStream(null);
     }
   }, [stream]);
 
