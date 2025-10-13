@@ -9,9 +9,17 @@ interface BarcodeScannerProps {
 }
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
+  // scannerインスタンスと初期化フラグをuseRefで管理
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
+    // 既に初期化済みの場合は何もしない
+    if (initialized.current) {
+      return;
+    }
+    initialized.current = true;
+
     // ライブラリを動的にインポート
     import('html5-qrcode').then(({ Html5Qrcode }) => {
       const scanner = new Html5Qrcode('reader');
@@ -25,7 +33,7 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
             throw new Error("カメラが見つかりません。");
           }
 
-          // 背面カメラを優先的に選択 (ラベルに "back" や "背面" が含まれるものを探す)
+          // 背面カメラを優先的に選択
           const rearCamera = devices.find(device => /back|背面/.test(device.label.toLowerCase()));
           const cameraId = rearCamera ? rearCamera.id : devices[0].id; // 見つからなければ最初のカメラ
 
