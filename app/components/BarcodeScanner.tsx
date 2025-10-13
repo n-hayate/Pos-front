@@ -34,7 +34,7 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
 
         // 💡【修正点】カメラIDを自前で探すのをやめ、facingModeで背面カメラを直接指定する
         await html5QrCode.start(
-          { facingMode: "environment" }, // "environment" は背面カメラを指す標準的な方法
+          { facingMode: { exact: "environment" } },  // "environment" は背面カメラを指す標準的な方法
           {
             fps: 10,
             qrbox: { width: 250, height: 250 },
