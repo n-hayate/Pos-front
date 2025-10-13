@@ -25,7 +25,7 @@ jobs:
       - name: Build (Next.js standalone)
         run: npm run build
         env:
-        NEXT_PUBLIC_API_URL: "https://app-002-gen10-step3-1-py-oshima42.azurewebsites.net"
+           NEXT_PUBLIC_API_URL: "https://app-002-gen10-step3-1-py-oshima42.azurewebsites.net"
         # npm は build 後に postbuild を自動実行
         # （.next/static と public が .next/standalone 配下にコピーされる想定）
 
