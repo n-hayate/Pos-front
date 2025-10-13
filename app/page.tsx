@@ -104,9 +104,7 @@ export default function PosPage() {
     <div className="container mx-auto p-4 bg-gray-50 min-h-screen">
       {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
       
-      {/* ▼▼▼ ここから修正 ▼▼▼ */}
       {isScannerOpen && (
-        // ポップアップ画面のUIをここで定義する
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
              <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
@@ -125,7 +123,6 @@ export default function PosPage() {
           </div>
         </div>
       )}
-      {/* ▲▲▲ ここまで修正 ▲▲▲ */}
 
       <header className="text-center mb-8">
         <h1 className="text-4xl font-extrabold text-gray-800">モバイルPOSアプリ</h1>
@@ -133,12 +130,14 @@ export default function PosPage() {
 
       <main className="max-w-2xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
         <div className="mb-6">
+          {/* ▼▼▼ 本来修正したかったのはこのボタンです ▼▼▼ */}
           <button
             onClick={() => setIsScannerOpen(true)}
             className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors text-lg shadow-md active:scale-95"
           >
-            スキャン（カメラ）
+            背面カメラを起動する（最終確認V3）
           </button>
+          {/* ▲▲▲ ここまで ▲▲▲ */}
         </div>
 
         {scannedProduct && (
@@ -189,6 +188,7 @@ export default function PosPage() {
         </div>
       </main>
       
+      {/* ▼▼▼ この部分は元の正しい状態に戻しました ▼▼▼ */}
       <footer className="max-w-2xl mx-auto mt-4">
         <button 
           onClick={() => setShowDebug(!showDebug)}
