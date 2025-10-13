@@ -13,7 +13,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js 22.x
+      - name: Use Node.js 22.x   # ← ビルドは 22 のまま（あなたの希望を維持）
         uses: actions/setup-node@v4
         with:
           node-version: '22.x'
@@ -25,29 +25,23 @@ jobs:
       - name: Build (Next.js standalone)
         run: npm run build
         env:
-          # ビルド時に埋め込む（ここが超重要）
           NEXT_PUBLIC_API_URL: "https://app-002-gen10-step3-1-py-oshima42.azurewebsites.net"
 
-      # Windows 用に wwwroot へ展開される ZIP ルートを作る
       - name: Assemble release folder (Windows)
         run: |
           set -e
           rm -rf release
           mkdir -p release
-
-          # 1) standalone 本体（server.js 等）を release 直下へ
+          # standalone 一式（server.js がここに来る）
           cp -R .next/standalone/* release/
-
-          # 2) Next が要求する .next/static と BUILD_ID を同階層へ
+          # Next が要求する .next/static と BUILD_ID
           mkdir -p release/.next
           cp -R .next/static release/.next/static
           if [ -f ".next/BUILD_ID" ]; then cp .next/BUILD_ID release/.next/BUILD_ID; fi
-
-          # 3) public があれば
+          # public があれば追加
           if [ -d "public" ]; then cp -R public release/public; fi
-
-          # 4) 重要: Windows(IIS)起動用 web.config を ZIP ルートへ
-          if [ -f "web.config" ]; then cp web.config release/web.config; else echo "web.config not found!"; fi
+          # Windows 用 web.config を ZIP ルートへ
+          if [ -f "web.config" ]; then cp web.config release/web.config; fi
 
       - name: Inspect release contents (debug)
         run: |
@@ -55,7 +49,7 @@ jobs:
           ls -la release | sed -n '1,200p'
           echo "== release/.next =="
           ls -la release/.next | sed -n '1,200p'
-          echo "== release/.next/static/chunks (part) =="
+          echo "== chunks =="
           ls -la release/.next/static/chunks | sed -n '1,200p' || true
 
       - name: Zip artifact
@@ -69,4 +63,4 @@ jobs:
           app-name: app-002-gen10-step3-1-node-oshima42
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: ./deployment.zip
-          # Windows + publish-profile では startup-command は不可
+          # startup-command は Windows では無効なので指定しない
