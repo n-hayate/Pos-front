@@ -1,151 +1,191 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { scanImageData, ZBarSymbol } from "@undecaf/zbar-wasm";
+import { useState, useEffect, useCallback, Fragment } from 'react';
+import BarcodeScanner from './components/BarcodeScanner';
+import Notification from './components/Notification';
+import { searchProduct, purchaseItems } from './lib/api';
+import type { Product, PurchaseItem, PurchaseRequest } from './types';
 
-interface BarcodeScannerProps {
-  onScan?: (janCode: string) => void;
-  onError?: (error: string) => void;
-}
+export default function PosPage() {
+  const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
+  const [purchaseList, setPurchaseList] = useState<PurchaseItem[]>([]);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [totalAmount, setTotalAmount] = useState(0);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
 
-export default function BarcodeScanner({ onScan, onError }: BarcodeScannerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const isProcessingRef = useRef(false);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const lastScannedTimeRef = useRef<number>(0);
-  const SCAN_INTERVAL = 1000;
-  const initialized = useRef(false);
+  const addLog = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString('ja-JP');
+    setLogs(prev => [`[${timestamp}] ${message}`, ...prev]);
+  }, []);
 
-  const isValidJAN = (code: string): boolean => /^(\d{8}|\d{13})$/.test(code);
+  useEffect(() => {
+    const newTotal = purchaseList.reduce((sum, item) => sum + item.prd_price * item.quantity, 0);
+    setTotalAmount(newTotal);
+  }, [purchaseList]);
 
-  const scanLoop = async () => {
-    // requestAnimationFrameの呼び出しをループの最初に移動
-    if (videoRef.current && stream) {
-        animationFrameRef.current = requestAnimationFrame(scanLoop);
-    }
+  const showNotification = useCallback((message: string, type: 'success' | 'error') => {
+    setNotification({ message, type });
+  }, []);
 
-    if (!videoRef.current || !stream) return;
-
-    const video = videoRef.current;
-    if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0) return;
-    if (isProcessingRef.current) return;
-
-    isProcessingRef.current = true;
-    const canvas = canvasRef.current ?? (canvasRef.current = document.createElement("canvas"));
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) {
-      isProcessingRef.current = false;
-      return;
-    }
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
+  const handleScan = useCallback(async (result: string) => {
+    setIsScannerOpen(false);
+    addLog(`スキャン結果: ${result}`);
+    addLog(`APIサーバーに商品を問い合わせています...`);
+    
     try {
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const results: ZBarSymbol[] = await scanImageData(imageData);
-      if (results.length > 0) {
-        const rawData = results[0].data;
-        let scannedCode: string;
-        if (typeof rawData === 'string') {
-          scannedCode = rawData;
-        } else {
-          scannedCode = new TextDecoder('utf-8').decode(rawData);
-        }
-        scannedCode = scannedCode.trim();
-
-        if (scannedCode && isValidJAN(scannedCode)) {
-          const now = Date.now();
-          if (now - lastScannedTimeRef.current >= SCAN_INTERVAL) {
-            lastScannedTimeRef.current = now;
-            onScan?.(scannedCode);
-          }
-        }
+      const data = await searchProduct(result);
+      addLog(`API Response Body: ${JSON.stringify(data, null, 2)}`);
+      
+      if (data && data.product) {
+        showNotification(`「${data.product.prd_name}」を読み取りました`, 'success');
+        setScannedProduct(data.product);
+      } else {
+        showNotification('商品が見つかりませんでした', 'error');
+        setScannedProduct(null);
       }
-    } catch (e) {
-      console.error("スキャン処理エラー:", e);
-      onError?.("スキャン処理中にエラーが発生しました。");
-    } finally {
-      isProcessingRef.current = false;
+    } catch (error: any) {
+        showNotification('商品検索でエラーが発生しました', 'error');
+        addLog(`[CRITICAL ERROR] API通信に失敗しました。`);
+        addLog(`[ERROR DETAIL] ${JSON.stringify({
+            message: error.message,
+            name: error.name,
+            ...error
+        }, null, 2)}`);
+        setScannedProduct(null);
+    }
+  }, [addLog, showNotification]);
+
+  const handleAddItem = () => {
+    if (scannedProduct) {
+      const existingItem = purchaseList.find(item => item.prd_id === scannedProduct.prd_id);
+      if (existingItem) {
+        showNotification('この商品は既に追加されています', 'error');
+      } else {
+        setPurchaseList([...purchaseList, { ...scannedProduct, quantity: 1 }]);
+        addLog(`「${scannedProduct.prd_name}」を購入リストに追加しました。`);
+      }
+      setScannedProduct(null);
     }
   };
 
-  const startScanning = useCallback(async () => {
-    let mediaStream: MediaStream | null = null;
-    const videoConstraints: MediaTrackConstraints = {
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-    };
+  const handlePurchase = async () => {
+    if (purchaseList.length === 0) {
+      showNotification('購入リストに商品がありません', 'error');
+      return;
+    }
+    addLog(`${purchaseList.length}点の商品を購入します...`);
     try {
-      try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { ...videoConstraints, facingMode: { exact: "environment" } },
-          audio: false,
-        });
-      } catch (err) {
-        console.warn("exact: environment 失敗。フォールバックします...", err);
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { ...videoConstraints, facingMode: "environment" },
-          audio: false,
-        });
+      const purchaseData: PurchaseRequest = {
+        store_cd: '30',
+        pos_no: '90',
+        items: purchaseList,
+      };
+      const data = await purchaseItems(purchaseData);
+      addLog(`購入API Response Body: ${JSON.stringify(data, null, 2)}`);
+
+      if (data.success) {
+        showNotification(`購入が完了しました！ 合計: ${data.total_amount}円`, 'success');
+        setPurchaseList([]);
+        setScannedProduct(null);
+      } else {
+        showNotification('購入処理に失敗しました', 'error');
       }
-      if (videoRef.current && mediaStream) {
-        videoRef.current.srcObject = mediaStream;
-        await videoRef.current.play();
-        setStream(mediaStream);
-        animationFrameRef.current = requestAnimationFrame(scanLoop);
-      }
-    } catch (err) {
-      console.error("カメラ起動失敗:", err);
-      onError?.("カメラの起動に失敗しました。権限を確認してください。");
+    } catch (error: any) {
+      showNotification('購入中にエラーが発生しました', 'error');
+       addLog(`[CRITICAL ERROR] 購入API通信に失敗しました。`);
+       addLog(`[ERROR DETAIL] ${JSON.stringify(error, null, 2)}`);
     }
-  }, [onScan, onError]);
-
-  const stopScanning = useCallback(() => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      setStream(null);
-    }
-  }, [stream]);
-
-  useEffect(() => {
-    if (!initialized.current) {
-      initialized.current = true;
-      startScanning();
-    }
-    return () => {
-      stopScanning();
-    };
-  }, [startScanning, stopScanning]);
-
+  };
+  
   return (
-    <div className="w-full relative">
-      <video
-        ref={videoRef}
-        className="w-full h-60 bg-gray-900 rounded-lg object-cover"
-        autoPlay
-        muted
-        playsInline
-      />
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-11/12 h-2/5 border-4 border-red-500 border-dashed rounded-lg opacity-75"></div>
-        <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-red-500 animate-scan"></div>
-      </div>
-      <style jsx>{`
-        @keyframes scan {
-          0% { transform: translateY(-100%); }
-          100% { transform: translateY(100%); }
-        }
-        .animate-scan {
-          animation: scan 2s infinite alternate ease-in-out;
-        }
-      `}</style>
+    <div className="container mx-auto p-4 bg-gray-50 min-h-screen">
+      {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
+      
+      {isScannerOpen && (
+        <BarcodeScanner
+          onScan={handleScan}
+          onClose={() => setIsScannerOpen(false)}
+        />
+      )}
+
+      <header className="text-center mb-8">
+        <h1 className="text-4xl font-extrabold text-gray-800">モバイルPOSアプリ</h1>
+      </header>
+
+      <main className="max-w-2xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
+        <div className="mb-6">
+          <button
+            onClick={() => setIsScannerOpen(true)}
+            className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors text-lg shadow-md active:scale-95"
+          >
+            スキャン（カメラ）
+          </button>
+        </div>
+
+        {scannedProduct && (
+          <div className="mb-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
+            <h2 className="text-xl font-bold text-gray-700 mb-2">スキャンした商品</h2>
+            <div className="space-y-1">
+              <p><span className="font-semibold">コード:</span> {scannedProduct.prd_code}</p>
+              <p><span className="font-semibold">商品名:</span> {scannedProduct.prd_name}</p>
+              <p><span className="font-semibold">価格:</span> {scannedProduct.prd_price}円</p>
+            </div>
+            <button
+              onClick={handleAddItem}
+              className="w-full mt-4 bg-green-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors active:scale-95"
+            >
+              追加
+            </button>
+          </div>
+        )}
+
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 border-b-2 border-gray-200 pb-2 mb-4">購入リスト</h2>
+          <div className="space-y-2">
+            {purchaseList.length > 0 ? (
+              purchaseList.map((item) => (
+                <div key={item.prd_id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                  <span className="flex-1">{item.prd_name}</span>
+                  <span className="w-24 text-right">{item.prd_price}円 x {item.quantity}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-gray-500 text-center py-4">商品がありません</p>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t-2 border-gray-200 pt-4">
+          <div className="flex justify-between items-center text-2xl font-bold text-gray-800 mb-4">
+            <span>合計金額</span>
+            <span>{totalAmount.toLocaleString()}円</span>
+          </div>
+          <button
+            onClick={handlePurchase}
+            className="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors text-xl shadow-md disabled:bg-gray-400 active:scale-95"
+            disabled={purchaseList.length === 0}
+          >
+            購入
+          </button>
+        </div>
+      </main>
+
+      <footer className="max-w-2xl mx-auto mt-4">
+        <button 
+          onClick={() => setShowDebug(!showDebug)}
+          className="w-full text-sm text-gray-600 bg-gray-200 hover:bg-gray-300 py-2 px-4 rounded-lg"
+        >
+          {showDebug ? '▲ デバッグコンソールを隠す' : '▼ デバッグコンソールを表示'}
+        </button>
+        {showDebug && (
+          <div className="mt-2 p-4 bg-gray-800 text-white rounded-lg text-xs font-mono whitespace-pre-wrap h-48 overflow-y-auto">
+            {logs.length > 0 ? logs.map((log, i) => <Fragment key={i}>{log}<br/></Fragment>) : "ログはありません"}
+          </div>
+        )}
+        {showDebug && <button onClick={() => setLogs([])} className="w-full text-xs text-gray-500 mt-1">クリア</button>}
+      </footer>
     </div>
   );
 }
