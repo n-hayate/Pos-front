@@ -9,78 +9,79 @@ interface BarcodeScannerProps {
 }
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
-  // useEffectが複数回実行されるのを防ぐためのフラグ
   const isComponentMounted = useRef(false);
 
   useEffect(() => {
-    // 開発モードのStrict Modeによる二重実行に対応
     if (isComponentMounted.current) {
       return;
     }
     isComponentMounted.current = true;
 
-    // スキャナのインスタンスを格納する変数
     let html5QrCode: Html5Qrcode | undefined;
 
-    const setupScanner = async () => {
+    const getRearCameraId = async (): Promise<string> => {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(track => track.stop());
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      
+      if (videoDevices.length === 0) {
+        throw new Error("利用可能なカメラが見つかりません。");
+      }
+
+      const rearCamera = videoDevices.find(device => /back|背面/.test(device.label.toLowerCase()));
+      
+      // 【修正点 1/2】 .id -> .deviceId に変更
+      return rearCamera ? rearCamera.deviceId : videoDevices[videoDevices.length - 1].deviceId;
+    };
+
+
+    const setupAndStartScanner = async () => {
       try {
         const { Html5Qrcode } = await import('html5-qrcode');
+
+        const rearCameraId = await getRearCameraId();
         
-        // ① 最初にカメラ権限を取得し、デバイスリストを得る
-        const cameras = await Html5Qrcode.getCameras();
-        if (!cameras || cameras.length === 0) {
-          throw new Error("カメラが見つかりません。");
-        }
-
-        // ② 背面カメラを特定するロジック (より堅牢に)
-        const rearCamera = cameras.find(camera => /back|背面/.test(camera.label.toLowerCase()));
-        const cameraId = rearCamera ? rearCamera.id : cameras[cameras.length - 1].id;
-
-        // ③ スキャナを生成し、DOMに紐付ける
         const scannerElement = document.getElementById('reader');
         if (!scannerElement) {
-          throw new Error("スキャナ用のDOM要素が見つかりません。");
+          throw new Error("スキャナ用のDOM要素 '#reader' が見つかりません。");
         }
+
         html5QrCode = new Html5Qrcode(scannerElement.id);
 
-        // ④ 特定したカメラIDでスキャンを開始
         await html5QrCode.start(
-          cameraId,
+          rearCameraId, // 特定したIDを直接指定
           {
             fps: 10,
             qrbox: { width: 250, height: 250 },
           },
-          (decodedText, decodedResult) => {
-            // 成功時にスキャンを停止して結果をコールバック
+          (decodedText) => {
             if (html5QrCode?.isScanning) {
-              html5QrCode.stop()
-                .then(() => onScan(decodedText))
-                .catch(err => {
-                  console.error("スキャナの停止に失敗しました。", err);
+              // 【修正点 2/2】 念のため、成功時の停止処理も追加
+              html5QrCode.stop().then(() => onScan(decodedText)).catch(err => {
+                  console.error("スキャナの停止に失敗しましたが、結果を処理します。", err);
                   onScan(decodedText);
-                });
+              });
             }
           },
-          (errorMessage) => {
-            // エラーは無視
-          }
+          (errorMessage) => { /* エラーは無視 */ }
         );
 
       } catch (err) {
-        console.error("カメラのセットアップ中にエラーが発生しました:", err);
-        alert(err instanceof Error ? err.message : "カメラの起動に失敗しました。サイトへのアクセス許可を確認してください。");
+        console.error("カメラのセットアップ中に致命的なエラーが発生:", err);
+        const message = err instanceof Error ? err.message : "カメラの起動に失敗しました。";
+        alert(`${message}\n\nサイトにカメラのアクセス許可が与えられているか確認してください。`);
         onClose();
       }
     };
 
-    setupScanner();
+    setupAndStartScanner();
 
-    // コンポーネントがアンマウントされる際のクリーンアップ処理
     return () => {
-      // html5QrCodeインスタンスが存在し、スキャン中であれば停止
       if (html5QrCode?.isScanning) {
         html5QrCode.stop().catch(err => {
-          console.error("クリーンアップ中のスキャナ停止に失敗しました。", err);
+          console.error("クリーンアップ中のスキャナ停止に失敗", err);
         });
       }
     };
@@ -92,11 +93,10 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
         <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
           バーコードをスキャン
         </h3>
-        {/* readerのidを持つdivを直接配置 */}
-        <div id="reader" className="w-full aspect-square rounded-lg overflow-hidden mb-4 border-2 border-gray-300 bg-gray-100" />
+        <div id="reader" className="w-full aspect-square rounded-lg overflow-hidden border-2 border-gray-300 bg-gray-100" />
         <button
           onClick={onClose}
-          className="w-full mt-2 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-transform transform active:scale-95"
+          className="w-full mt-4 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors transform active:scale-95"
         >
           キャンセル
         </button>
