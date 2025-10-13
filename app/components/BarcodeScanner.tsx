@@ -1,191 +1,86 @@
 'use client';
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
-import BarcodeScanner from './components/BarcodeScanner';
-import Notification from './components/Notification';
-import { searchProduct, purchaseItems } from './lib/api';
-import type { Product, PurchaseItem, PurchaseRequest } from './types';
+import { useEffect, useRef } from 'react';
+import type { Html5Qrcode } from 'html5-qrcode';
 
-export default function PosPage() {
-  const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
-  const [purchaseList, setPurchaseList] = useState<PurchaseItem[]>([]);
-  const [isScannerOpen, setIsScannerOpen] = useState(false);
-  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [totalAmount, setTotalAmount] = useState(0);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [showDebug, setShowDebug] = useState(false);
+interface BarcodeScannerProps {
+  onScan: (result: string) => void;
+  onClose: () => void;
+}
 
-  const addLog = useCallback((message: string) => {
-    const timestamp = new Date().toLocaleTimeString('ja-JP');
-    setLogs(prev => [`[${timestamp}] ${message}`, ...prev]);
-  }, []);
+export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   useEffect(() => {
-    const newTotal = purchaseList.reduce((sum, item) => sum + item.prd_price * item.quantity, 0);
-    setTotalAmount(newTotal);
-  }, [purchaseList]);
+    // ライブラリを動的にインポート
+    import('html5-qrcode').then(({ Html5Qrcode }) => {
+      const scanner = new Html5Qrcode('reader');
+      scannerRef.current = scanner;
 
-  const showNotification = useCallback((message: string, type: 'success' | 'error') => {
-    setNotification({ message, type });
-  }, []);
+      const startScanner = async () => {
+        try {
+          // 利用可能なカメラを取得
+          const devices = await Html5Qrcode.getCameras();
+          if (!devices || devices.length === 0) {
+            throw new Error("カメラが見つかりません。");
+          }
 
-  const handleScan = useCallback(async (result: string) => {
-    setIsScannerOpen(false);
-    addLog(`スキャン結果: ${result}`);
-    addLog(`APIサーバーに商品を問い合わせています...`);
-    
-    try {
-      const data = await searchProduct(result);
-      addLog(`API Response Body: ${JSON.stringify(data, null, 2)}`);
-      
-      if (data && data.product) {
-        showNotification(`「${data.product.prd_name}」を読み取りました`, 'success');
-        setScannedProduct(data.product);
-      } else {
-        showNotification('商品が見つかりませんでした', 'error');
-        setScannedProduct(null);
-      }
-    } catch (error: any) {
-        showNotification('商品検索でエラーが発生しました', 'error');
-        addLog(`[CRITICAL ERROR] API通信に失敗しました。`);
-        addLog(`[ERROR DETAIL] ${JSON.stringify({
-            message: error.message,
-            name: error.name,
-            ...error
-        }, null, 2)}`);
-        setScannedProduct(null);
-    }
-  }, [addLog, showNotification]);
+          // 背面カメラを優先的に選択 (ラベルに "back" や "背面" が含まれるものを探す)
+          const rearCamera = devices.find(device => /back|背面/.test(device.label.toLowerCase()));
+          const cameraId = rearCamera ? rearCamera.id : devices[0].id; // 見つからなければ最初のカメラ
 
-  const handleAddItem = () => {
-    if (scannedProduct) {
-      const existingItem = purchaseList.find(item => item.prd_id === scannedProduct.prd_id);
-      if (existingItem) {
-        showNotification('この商品は既に追加されています', 'error');
-      } else {
-        setPurchaseList([...purchaseList, { ...scannedProduct, quantity: 1 }]);
-        addLog(`「${scannedProduct.prd_name}」を購入リストに追加しました。`);
-      }
-      setScannedProduct(null);
-    }
-  };
-
-  const handlePurchase = async () => {
-    if (purchaseList.length === 0) {
-      showNotification('購入リストに商品がありません', 'error');
-      return;
-    }
-    addLog(`${purchaseList.length}点の商品を購入します...`);
-    try {
-      const purchaseData: PurchaseRequest = {
-        store_cd: '30',
-        pos_no: '90',
-        items: purchaseList,
+          // スキャナを開始
+          await scanner.start(
+            cameraId,
+            {
+              fps: 10,
+              qrbox: { width: 250, height: 250 },
+            },
+            (decodedText) => {
+              // スキャン成功時の処理
+              if (scannerRef.current?.isScanning) {
+                scannerRef.current.stop()
+                  .then(() => onScan(decodedText))
+                  .catch(err => console.error("スキャナ停止失敗", err));
+              }
+            },
+            (errorMessage) => { /* 読み取り中のエラーは無視 */ }
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "カメラの起動に失敗しました。";
+          alert(`カメラエラー: ${message}\nサイトのカメラ権限を許可してください。`);
+          onClose();
+        }
       };
-      const data = await purchaseItems(purchaseData);
-      addLog(`購入API Response Body: ${JSON.stringify(data, null, 2)}`);
 
-      if (data.success) {
-        showNotification(`購入が完了しました！ 合計: ${data.total_amount}円`, 'success');
-        setPurchaseList([]);
-        setScannedProduct(null);
-      } else {
-        showNotification('購入処理に失敗しました', 'error');
+      startScanner();
+    });
+
+    // コンポーネントがアンマウントされる際のクリーンアップ処理
+    return () => {
+      if (scannerRef.current?.isScanning) {
+        scannerRef.current.stop().catch(err => {
+          console.error("クリーンアップ中のスキャナ停止に失敗", err);
+        });
       }
-    } catch (error: any) {
-      showNotification('購入中にエラーが発生しました', 'error');
-       addLog(`[CRITICAL ERROR] 購入API通信に失敗しました。`);
-       addLog(`[ERROR DETAIL] ${JSON.stringify(error, null, 2)}`);
-    }
-  };
-  
+    };
+  }, [onClose, onScan]);
+
   return (
-    <div className="container mx-auto p-4 bg-gray-50 min-h-screen">
-      {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
-      
-      {isScannerOpen && (
-        <BarcodeScanner
-          onScan={handleScan}
-          onClose={() => setIsScannerOpen(false)}
-        />
-      )}
-
-      <header className="text-center mb-8">
-        <h1 className="text-4xl font-extrabold text-gray-800">モバイルPOSアプリ</h1>
-      </header>
-
-      <main className="max-w-2xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
-        <div className="mb-6">
-          <button
-            onClick={() => setIsScannerOpen(true)}
-            className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors text-lg shadow-md active:scale-95"
-          >
-            スキャン（カメラ）
-          </button>
-        </div>
-
-        {scannedProduct && (
-          <div className="mb-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
-            <h2 className="text-xl font-bold text-gray-700 mb-2">スキャンした商品</h2>
-            <div className="space-y-1">
-              <p><span className="font-semibold">コード:</span> {scannedProduct.prd_code}</p>
-              <p><span className="font-semibold">商品名:</span> {scannedProduct.prd_name}</p>
-              <p><span className="font-semibold">価格:</span> {scannedProduct.prd_price}円</p>
-            </div>
-            <button
-              onClick={handleAddItem}
-              className="w-full mt-4 bg-green-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors active:scale-95"
-            >
-              追加
-            </button>
-          </div>
-        )}
-
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-800 border-b-2 border-gray-200 pb-2 mb-4">購入リスト</h2>
-          <div className="space-y-2">
-            {purchaseList.length > 0 ? (
-              purchaseList.map((item) => (
-                <div key={item.prd_id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                  <span className="flex-1">{item.prd_name}</span>
-                  <span className="w-24 text-right">{item.prd_price}円 x {item.quantity}</span>
-                </div>
-              ))
-            ) : (
-              <p className="text-gray-500 text-center py-4">商品がありません</p>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t-2 border-gray-200 pt-4">
-          <div className="flex justify-between items-center text-2xl font-bold text-gray-800 mb-4">
-            <span>合計金額</span>
-            <span>{totalAmount.toLocaleString()}円</span>
-          </div>
-          <button
-            onClick={handlePurchase}
-            className="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors text-xl shadow-md disabled:bg-gray-400 active:scale-95"
-            disabled={purchaseList.length === 0}
-          >
-            購入
-          </button>
-        </div>
-      </main>
-
-      <footer className="max-w-2xl mx-auto mt-4">
-        <button 
-          onClick={() => setShowDebug(!showDebug)}
-          className="w-full text-sm text-gray-600 bg-gray-200 hover:bg-gray-300 py-2 px-4 rounded-lg"
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
+        <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
+          バーコードをスキャン
+        </h3>
+        {/* スキャナが表示されるためのdiv要素 */}
+        <div id="reader" className="w-full aspect-square rounded-lg overflow-hidden border-2 border-gray-300 bg-gray-100" />
+        <button
+          onClick={onClose}
+          className="w-full mt-4 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors transform active:scale-95"
         >
-          {showDebug ? '▲ デバッグコンソールを隠す' : '▼ デバッグコンソールを表示'}
+          キャンセル
         </button>
-        {showDebug && (
-          <div className="mt-2 p-4 bg-gray-800 text-white rounded-lg text-xs font-mono whitespace-pre-wrap h-48 overflow-y-auto">
-            {logs.length > 0 ? logs.map((log, i) => <Fragment key={i}>{log}<br/></Fragment>) : "ログはありません"}
-          </div>
-        )}
-        {showDebug && <button onClick={() => setLogs([])} className="w-full text-xs text-gray-500 mt-1">クリア</button>}
-      </footer>
+      </div>
     </div>
   );
 }
