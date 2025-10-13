@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import type { Html5Qrcode } from 'html5-qrcode';
+// Html5Qrcodeの型を明確にインポートします
+import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
 
 interface BarcodeScannerProps {
   onScan: (result: string) => void;
@@ -9,54 +10,49 @@ interface BarcodeScannerProps {
 }
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
-  // scannerインスタンスと初期化フラグをuseRefで管理
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const initialized = useRef(false);
+  // useEffectのクリーンアップが複数回実行されるのを防ぐためのフラグ
+  const cleanupCalled = useRef(false);
 
   useEffect(() => {
-    // 既に初期化済みの場合は何もしない
-    if (initialized.current) {
+    // 既にインスタンスが存在する場合は処理をスキップ
+    if (scannerRef.current) {
       return;
     }
-    initialized.current = true;
 
     // ライブラリを動的にインポート
     import('html5-qrcode').then(({ Html5Qrcode }) => {
+      // コンポーネントが既にアンマウントされていたら何もしない
+      if (cleanupCalled.current) {
+        return;
+      }
+      
       const scanner = new Html5Qrcode('reader');
       scannerRef.current = scanner;
 
       const startScanner = async () => {
         try {
-          // 利用可能なカメラを取得
-          const devices = await Html5Qrcode.getCameras();
-          if (!devices || devices.length === 0) {
-            throw new Error("カメラが見つかりません。");
-          }
+          // scannerRef.current がnullでないことを確認
+          if (!scannerRef.current) return;
 
-          // 背面カメラを優先的に選択
-          const rearCamera = devices.find(device => /back|背面/.test(device.label.toLowerCase()));
-          const cameraId = rearCamera ? rearCamera.id : devices[0].id; // 見つからなければ最初のカメラ
-
-          // スキャナを開始
           await scanner.start(
-            cameraId,
+            { facingMode: "environment" },
             {
               fps: 10,
               qrbox: { width: 250, height: 250 },
             },
             (decodedText) => {
               // スキャン成功時の処理
-              if (scannerRef.current?.isScanning) {
-                scannerRef.current.stop()
-                  .then(() => onScan(decodedText))
-                  .catch(err => console.error("スキャナ停止失敗", err));
+              // スキャナがアクティブな状態か確認してから停止処理を行う
+              if (scannerRef.current && scannerRef.current.getState() === Html5QrcodeScannerState.SCANNING) {
+                 onScan(decodedText);
               }
             },
             (errorMessage) => { /* 読み取り中のエラーは無視 */ }
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : "カメラの起動に失敗しました。";
-          alert(`カメラエラー: ${message}\nサイトのカメラ権限を許可してください。`);
+          alert(`カメラエラー: ${message}\n\nお使いのブラウザで、このサイトのカメラへのアクセスが許可されているか確認してください。\nまた、サイトはHTTPSでのアクセスが必要です。`);
           onClose();
         }
       };
@@ -66,13 +62,26 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
 
     // コンポーネントがアンマウントされる際のクリーンアップ処理
     return () => {
-      if (scannerRef.current?.isScanning) {
-        scannerRef.current.stop().catch(err => {
-          console.error("クリーンアップ中のスキャナ停止に失敗", err);
-        });
+      cleanupCalled.current = true;
+      const scanner = scannerRef.current;
+      if (scanner) {
+        // isScanning状態に関わらず、インスタンスが存在すれば停止を試みる
+        scanner.stop()
+          .then(() => {
+            console.log("スキャナを正常に停止しました。");
+            // clear()を呼び出してリソースを完全に解放
+            scanner.clear();
+          })
+          .catch(err => {
+            console.error("スキャナの停止またはクリアに失敗しました。", err);
+          })
+          .finally(() => {
+            scannerRef.current = null;
+          });
       }
     };
-  }, [onClose, onScan]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 依存配列は空のままにします
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
@@ -80,7 +89,6 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
         <h3 className="text-xl font-bold mb-4 text-center text-gray-800">
           バーコードをスキャン
         </h3>
-        {/* スキャナが表示されるためのdiv要素 */}
         <div id="reader" className="w-full aspect-square rounded-lg overflow-hidden border-2 border-gray-300 bg-gray-100" />
         <button
           onClick={onClose}
