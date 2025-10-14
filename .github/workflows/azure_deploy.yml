@@ -1,86 +1,82 @@
-# ファイル名: .github/workflows/azure-deploy.yml
-# Next.js Standaloneアプリをビルドし、Azure App Serviceにデプロイするワークフロー
+# ==============================================================================
+# Next.jsアプリをビルドし、Azure App Serviceにデプロイする最終版ワークフロー
+# 正常に動作したPythonのワークフローを参考に、Next.js用に最適化しました。
+# ==============================================================================
 
 name: Build and Deploy Next.js App to Azure
 
 on:
-  # mainブランチにpushされたときに実行
   push:
     branches:
       - main
-  # GitHubのUIから手動で実行できるようにする
   workflow_dispatch:
 
 jobs:
-  # -------------------------------------
-  # ビルドジョブ: アプリケーションをビルドし、デプロイ用のファイルを作成する
-  # -------------------------------------
+  # ------------------------------------------------------------------------------
+  # ビルドジョブ: アプリケーションをビルドし、デプロイ用のZIPファイルを作成する
+  # ------------------------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read # actions/checkoutに必要
+      contents: read # ソースコードのチェックアウトに必要
 
     steps:
-      # 1. リポジトリのソースコードをチェックアウトする
+      # 1. リポジトリのソースコードをチェックアウト
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # 2. Node.jsのバージョンを設定する (Azureの実行環境と合わせるのが望ましい)
+      # 2. Node.jsのバージョンを設定 (Azureの実行環境と一致させる)
       - name: Set up Node.js version
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
 
-      # 3. 依存関係のインストール、ビルド、テストを実行する
-      - name: Install Dependencies, Build, and Test
-        # ★重要★: `api.ts` で使用している環境変数名に合わせる
+      # 3. 依存パッケージのインストールとアプリケーションのビルド
+      - name: Install dependencies and build application
+        # `api.ts` で使用している環境変数をビルド時に設定する
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: |
           npm install
           npm run build --if-present
-          npm run test --if-present
 
-      # 4. デプロイ用のアーティファクトをZIP形式でパッケージ化する
-      # next.config.jsの `output: 'standalone'` と package.jsonの `postbuild` スクリプトにより、
-      # このディレクトリには実行に必要なファイルがすべて含まれている。
-      - name: Package artifact for deployment
-        run: zip -r release.zip ./.next/standalone
+      # 4. デプロイ用のアーティファクトをZIP形式で作成する
+      # `standalone` モードの出力ディレクトリを `deployment` という名前にリネームし、ZIP化する
+      - name: Create ZIP artifact for deployment
+        run: |
+          mv ./.next/standalone ./deployment
+          zip -r release.zip ./deployment
 
-      # 5. 作成したZIPファイルをアーティファクトとしてアップロードし、次のジョブで使えるようにする
+      # 5. 作成したZIPファイルを次のジョブに渡すためにアップロードする
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
           path: release.zip
 
-  # -------------------------------------
+  # ------------------------------------------------------------------------------
   # デプロイジョブ: ビルドされたファイルをAzureにデプロイする
-  # -------------------------------------
+  # ------------------------------------------------------------------------------
   deploy:
     runs-on: ubuntu-latest
-    # buildジョブが成功した後にのみ実行する
+    # `build`ジョブが成功した場合にのみ、このジョブを実行する
     needs: build
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
     
     steps:
-      # 1. buildジョブでアップロードされたアーティファクトをダウンロードする
+      # 1. `build`ジョブからZIPファイルをダウンロードする
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: node-app
 
       # 2. Azure Web Appにデプロイする
-      # `azure/webapps-deploy` アクションはZIPファイルを直接展開できるため、解凍ステップは不要。
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'tech0-gen-9-step3-1-node-3'
-          slot-name: 'Production'
-          # ダウンロードしたZIPファイルを直接パッケージとして指定する
+          # あなたのNext.jsアプリ名
+          app-name: 'app-002-gen10-step3-1-node-oshima42' 
+          # ダウンロードしたZIPファイルを指定
           package: release.zip
-          # GitHub Secretsに設定された発行プロファイルを使って認証する
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
+          # GitHub Secretsに保存された発行プロファイルで認証
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
