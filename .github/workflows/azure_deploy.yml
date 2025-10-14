@@ -55,6 +55,11 @@ jobs:
           name: node-app
           path: .
       
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
+      
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
@@ -62,4 +67,3 @@ jobs:
           app-name: 'tech0-gen-9-step3-1-node-3'
           slot-name: 'Production'
           package: .
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
