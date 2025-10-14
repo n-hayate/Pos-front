@@ -58,17 +58,29 @@ export default function PosPage() {
     }
   }, [addLog, showNotification]);
 
+  
   const handleAddItem = () => {
-    if (scannedProduct) {
-      const existingItem = purchaseList.find(item => item.prd_id === scannedProduct.prd_id);
+    if (!scannedProduct) return;
+
+    setPurchaseList(prevList => {
+      const existingItem = prevList.find(item => item.prd_id === scannedProduct.prd_id);
+
       if (existingItem) {
-        showNotification('この商品は既に追加されています', 'error');
+        // 商品が既にリストにある場合、数量を1増やす
+        addLog(`「${scannedProduct.prd_name}」の数量を1増やしました。`);
+        return prevList.map(item =>
+          item.prd_id === scannedProduct.prd_id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
       } else {
-        setPurchaseList([...purchaseList, { ...scannedProduct, quantity: 1 }]);
+        // 商品がリストにない場合、新しく追加する
         addLog(`「${scannedProduct.prd_name}」を購入リストに追加しました。`);
+        return [...prevList, { ...scannedProduct, quantity: 1 }];
       }
-      setScannedProduct(null);
-    }
+    });
+
+    setScannedProduct(null); // スキャン済み商品をクリア
   };
 
   const handlePurchase = async () => {

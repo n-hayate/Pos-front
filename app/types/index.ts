@@ -8,7 +8,7 @@ export interface Product {
 
 // 購入リスト内の商品の型
 export interface PurchaseItem extends Product {
-  quantity: 1; 
+  quantity: number;
 }
 
 // 商品検索APIのレスポンスの型
