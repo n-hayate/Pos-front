@@ -33,7 +33,7 @@ jobs:
           mkdir deploy
           cp -r ./public/. ./deploy/public
           cp -r ./.next/standalone/. ./deploy
-          cp -r ./.next/static/. ./deploy/.next/static
+          cp -r ./.next/static/. ./deploy/.static
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -56,7 +56,7 @@ jobs:
           path: .
       
       - name: Log in to Azure
-        uses: azure/login@v2
+        uses: azure/login@v1
         with:
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
       
