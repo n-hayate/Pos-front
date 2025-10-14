@@ -30,6 +30,8 @@ jobs:
       #    - next.config.jsの 'standalone' 設定により、.next/standalone に実行に必要なファイルがまとまる
       #    - package.jsonの 'postbuild' スクリプトにより、public と .next/static が自動でコピーされる
       - name: 'Build the application'
+        env: # この3行を追加
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: npm run build
 
       # 5. 完成品（.next/standaloneの中身）をZIPファイルに固める
