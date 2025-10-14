@@ -5,7 +5,6 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "postbuild": "cp -r ./public ./.next/standalone/",
     "start": "node ./.next/standalone/server.js",
     "lint": "next lint"
   },
@@ -28,4 +27,3 @@
     "typescript": "^5"
   }
 }
-
