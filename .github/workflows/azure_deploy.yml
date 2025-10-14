@@ -1,68 +1,86 @@
-name: Build and deploy Node.js app to Azure Web App - tech0-gen-9-step3-1-node-3
+# ファイル名: .github/workflows/azure-deploy.yml
+# Next.js Standaloneアプリをビルドし、Azure App Serviceにデプロイするワークフロー
+
+name: Build and Deploy Next.js App to Azure
 
 on:
+  # mainブランチにpushされたときに実行
   push:
     branches:
       - main
+  # GitHubのUIから手動で実行できるようにする
   workflow_dispatch:
 
-  jobs:
+jobs:
+  # -------------------------------------
+  # ビルドジョブ: アプリケーションをビルドし、デプロイ用のファイルを作成する
+  # -------------------------------------
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      contents: read # actions/checkoutに必要
 
     steps:
-      - uses: actions/checkout@v4
+      # 1. リポジトリのソースコードをチェックアウトする
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
+      # 2. Node.jsのバージョンを設定する (Azureの実行環境と合わせるのが望ましい)
       - name: Set up Node.js version
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
 
-      - name: npm install, build, and test
+      # 3. 依存関係のインストール、ビルド、テストを実行する
+      - name: Install Dependencies, Build, and Test
+        # ★重要★: `api.ts` で使用している環境変数名に合わせる
         env:
-          NEXT_PUBLIC_API_ENDPOINT: ${{ secrets.NEXT_PUBLIC_API_ENDPOINT }}
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: |
           npm install
           npm run build --if-present
           npm run test --if-present
 
-      - name: Copy artifact for deployment job
-        run: |
-          mkdir deploy
-          cp -r ./.next/standalone/. ./deploy
-          cp -r ./.next/static/. ./deploy/.next/static
+      # 4. デプロイ用のアーティファクトをZIP形式でパッケージ化する
+      # next.config.jsの `output: 'standalone'` と package.jsonの `postbuild` スクリプトにより、
+      # このディレクトリには実行に必要なファイルがすべて含まれている。
+      - name: Package artifact for deployment
+        run: zip -r release.zip ./.next/standalone
 
-      - name: Zip artifact for deployment
-        run: zip release.zip ./deploy -r 
-
+      # 5. 作成したZIPファイルをアーティファクトとしてアップロードし、次のジョブで使えるようにする
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
           path: release.zip
+
+  # -------------------------------------
+  # デプロイジョブ: ビルドされたファイルをAzureにデプロイする
+  # -------------------------------------
   deploy:
     runs-on: ubuntu-latest
+    # buildジョブが成功した後にのみ実行する
     needs: build
     environment:
       name: 'Production'
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
     
     steps:
+      # 1. buildジョブでアップロードされたアーティファクトをダウンロードする
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: node-app
 
-      - name: Unzip artifact for deployment
-        run: unzip release.zip
-      
+      # 2. Azure Web Appにデプロイする
+      # `azure/webapps-deploy` アクションはZIPファイルを直接展開できるため、解凍ステップは不要。
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'tech0-gen-9-step3-1-node-3'
           slot-name: 'Production'
-          package: ./deploy
+          # ダウンロードしたZIPファイルを直接パッケージとして指定する
+          package: release.zip
+          # GitHub Secretsに設定された発行プロファイルを使って認証する
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
