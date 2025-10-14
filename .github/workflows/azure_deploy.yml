@@ -21,6 +21,12 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '20.x'
+      # 3. 依存パッケージをインストール
+      - name: 'Clean previous builds' # このステップを追加
+        run: rm -rf ./.next
+
+      - name: 'Install dependencies'
+        run: npm install
 
       # 3. 依存パッケージをインストール
       - name: 'Install dependencies'
