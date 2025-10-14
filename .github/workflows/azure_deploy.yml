@@ -16,10 +16,12 @@ jobs:
       - name: 'Checkout Github Action'
         uses: actions/checkout@v4
 
+      # Node.jsのセットアップにキャッシュを追加して高速化
       - name: 'Set up Node.js'
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
+          cache: 'npm'
 
       - name: 'Install dependencies'
         run: npm install
@@ -29,7 +31,8 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: npm run build
 
-      # ▼▼▼ ここからがプロの荷造り専門家の仕事 ▼▼▼
+      # --- デプロイ用ファイルのアセンブル ---
+      # Next.jsのスタンドアロン出力と静的アセットを 'release' フォルダにまとめる
       - name: 'Assemble artifact for deployment'
         run: |
           mkdir release
@@ -37,15 +40,12 @@ jobs:
           cp -r ./.next/static ./release/.next/static
           cp -r ./public ./release/public
 
-      - name: 'Zip artifact for deployment'
-        run: zip release.zip ./release -r
-
+      # zipせずにフォルダをそのままアップロード
       - name: 'Upload artifact for deployment job'
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: release.zip
-      # ▲▲▲ ここまでがプロの荷造り専門家の仕事 ▲▲▲
+          path: ./release # releaseフォルダを直接指定
 
   deploy:
     runs-on: ubuntu-latest
@@ -55,19 +55,20 @@ jobs:
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
 
     steps:
+      # フォルダとしてアーティファクトをダウンロード
       - name: 'Download artifact from build job'
         uses: actions/download-artifact@v4
         with:
           name: node-app
+          path: ./release # カレントディレクトリにreleaseフォルダとして展開
 
-      - name: 'Unzip artifact for deployment'
-        run: unzip release.zip
+      # unzipステップは不要
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'app-002-gen10-step3-1-node-oshima42'
-          package: ./release # 完璧に荷造りされたreleaseフォルダをデプロイ
+          package: ./release # ダウンロードしたreleaseフォルダをそのままデプロイ
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           startup-command: 'node server.js'
