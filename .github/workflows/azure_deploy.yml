@@ -33,7 +33,7 @@ jobs:
           mkdir deploy
           cp -r ./public/. ./deploy/public
           cp -r ./.next/standalone/. ./deploy
-          cp -r ./.next/static/. ./deploy/.next/static
+          cp -r ./.next/static/. ./deploy/.static
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -55,7 +55,10 @@ jobs:
           name: node-app
           path: .
       
-      # azure/login ステップは完全に削除する
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
       
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
@@ -64,4 +67,3 @@ jobs:
           app-name: 'tech0-gen-9-step3-1-node-3'
           slot-name: 'Production'
           package: .
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D7D7608BBBFC476CB75971B41636D335 }}
