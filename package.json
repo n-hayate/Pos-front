@@ -10,7 +10,6 @@
     "dev": "next dev",
     "build": "next build",
     "start": "node server.js",
-    "lint": "next lint",
     "clean": "rm -rf .next node_modules release"
   },
   "dependencies": {
