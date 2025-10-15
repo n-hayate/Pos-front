@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "POS Application",
-  description: "POS application for Tech0",
+  title: "POS Application - Level 2",
+  description: "Mobile POS application with barcode scanning",
 };
 
 export default function RootLayout({
