@@ -37,7 +37,7 @@ jobs:
 
       - name: 'Assemble artifact for deployment'
         run: |
-          mkdir -p release
+          mkdir -p release/.next
           cp -r .next/standalone/* release/
           cp -r .next/static release/.next/static
           cp -r public release/public
