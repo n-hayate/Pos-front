@@ -47,72 +47,36 @@ jobs:
 
       - name: 'Prepare deployment package'
         run: |
-          echo "Creating release directory..."
+          echo "Creating deployment package from standalone output..."
           mkdir -p release
           
-          # standaloneの内容を全てコピー
-          echo "Copying standalone build..."
+          # 1. standaloneフォルダの中身を全てコピーする (これがベース)
           if [ -d .next/standalone ]; then
             cp -r .next/standalone/. release/
-            echo "✓ Standalone files copied"
+            echo "✓ Copied standalone directory contents to ./release"
           else
             echo "✗ ERROR: .next/standalone directory not found!"
-            echo "Available .next contents:"
-            ls -la .next/
             exit 1
           fi
-          
-          # staticファイルをコピー
-          echo "Copying static files..."
-          if [ -d .next/static ]; then
-            mkdir -p release/.next/static
-            cp -r .next/static/. release/.next/static/
-            echo "✓ Static files copied"
-          else
-            echo "✗ WARNING: .next/static not found"
-          fi
-          
-          # publicフォルダをコピー
-          echo "Copying public directory..."
+
+          # 2. publicフォルダをコピーする
           if [ -d public ]; then
-            cp -r public release/
-            echo "✓ Public directory copied"
-          else
-            echo "✗ WARNING: public directory not found"
+            cp -r public release/public
+            echo "✓ Copied public directory to ./release/public"
           fi
           
-          # package.jsonをコピー
-          echo "Copying package.json..."
-          cp package.json release/
-          
-          # node_modulesの生成（standaloneに含まれない場合）
-          cd release
-          if [ ! -d node_modules ]; then
-            echo "Installing production dependencies..."
-            npm ci --production
+          # 3. .next/static フォルダをコピーする (重要！)
+          if [ -d .next/static ]; then
+            cp -r .next/static release/.next/static
+            echo "✓ Copied static files to ./release/.next/static"
           fi
-          cd ..
           
-          # 構成確認
-          echo "Release directory structure:"
-          ls -laR release/ | head -100
-          
-          # 重要ファイルの確認
+          # 最終確認
           echo ""
-          echo "Checking critical files:"
-          if [ -f release/server.js ]; then
-            echo "✓ server.js found"
-            head -5 release/server.js
-          else
-            echo "✗ ERROR: server.js not found!"
-            exit 1
-          fi
-          
-          if [ -f release/package.json ]; then
-            echo "✓ package.json found"
-          else
-            echo "✗ ERROR: package.json not found!"
-          fi
+          echo "=========================================="
+          echo "Final deployment package structure (./release):"
+          ls -la release/
+          echo "=========================================="
 
       - name: 'Upload artifact for deployment job'
         uses: actions/upload-artifact@v4
@@ -152,3 +116,4 @@ jobs:
           app-name: 'app-002-gen10-step3-1-node-oshima42'
           package: ./release
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+
