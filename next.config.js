@@ -2,6 +2,7 @@
 const nextConfig = {
   output: 'standalone',
   
+  // 環境変数のログ出力（開発時のみ）
   webpack: (config, { isServer }) => {
     if (isServer && process.env.NODE_ENV === 'development') {
       console.log('========================================');
