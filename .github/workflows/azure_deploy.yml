@@ -22,39 +22,17 @@ jobs:
           node-version: '20.x'
           cache: 'npm'
 
-      # キャッシュの設定
-      - name: 'Cache dependencies'
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
       # 完全クリーンビルド
       - name: 'Force clean all caches'
         run: |
-          echo "Removing all build artifacts and caches..."
+          echo "Removing all build artifacts..."
           rm -rf .next
           rm -rf node_modules
           rm -rf release
-          rm -rf .npm
-          rm -rf ~/.npm
           echo "Clean complete."
 
       - name: 'Install dependencies'
-        run: npm ci --prefer-offline
-
-      # ソースコードスキャン
-      - name: '🔍 [DIAGNOSTIC] Scan source code for wrong URL'
-        run: |
-          echo "Scanning for hardcoded 'gy-oshima42' string in source code..."
-          if grep -r "gy-oshima42" . --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next; then
-            echo "🔥 WARNING: Found the wrong URL hardcoded in the source code above."
-          else
-            echo "✅ OK: Wrong URL not found in source code."
-          fi
-        continue-on-error: true
+        run: npm ci
 
       # ビルド（環境変数を明示的に設定）
       - name: 'Build the application'
@@ -64,58 +42,57 @@ jobs:
         run: |
           echo "=========================================="
           echo "Building with API URL: ${NEXT_PUBLIC_API_URL}"
-          echo "Node Environment: ${NODE_ENV}"
           echo "=========================================="
           npm run build
 
-      # デプロイパッケージの準備
+      # デプロイパッケージの準備（修正版）
       - name: 'Prepare deployment package'
         run: |
-          echo "Creating deployment package from standalone output..."
+          echo "Creating deployment package..."
           mkdir -p release
           
+          # standalone の内容をコピー
           if [ -d .next/standalone ]; then
+            echo "Copying standalone files..."
             cp -r .next/standalone/. release/
-            echo "✓ Copied standalone directory contents to ./release"
+            
+            # public フォルダをコピー
+            if [ -d public ]; then
+              echo "Copying public folder..."
+              mkdir -p release/public
+              cp -r public/. release/public/
+            fi
+            
+            # static フォルダをコピー
+            if [ -d .next/static ]; then
+              echo "Copying static folder..."
+              mkdir -p release/.next/static
+              cp -r .next/static/. release/.next/static/
+            fi
+            
+            echo "✓ Deployment package created successfully"
+            echo "Contents of release folder:"
+            ls -la release/
+            echo "Checking for server.js:"
+            ls -la release/server.js || echo "❌ server.js not found!"
           else
             echo "✗ ERROR: .next/standalone directory not found!"
             exit 1
           fi
 
-          if [ -d public ]; then
-            cp -r public release/public
-            echo "✓ Copied public directory to ./release/public"
-          fi
-          
-          if [ -d .next/static ]; then
-            cp -r .next/static release/.next/static
-            echo "✓ Copied static files to ./release/.next/static"
-          fi
-
-      # ビルド成果物のスキャン
-      - name: '🔍 [DIAGNOSTIC] Scan FINAL build artifacts for wrong URL'
+      # 診断: server.js の確認
+      - name: '🔍 Verify server.js exists'
         run: |
-          echo "Scanning the final packaged files in ./release for the wrong URL..."
-          if grep -r "gy-oshima42" ./release --exclude-dir=node_modules; then
-            echo "🔥🔥🔥 CRITICAL: The WRONG URL was found in the final build files!"
-            echo "This means the build process itself is using the wrong value, despite the secret."
-            echo "Files containing 'gy-oshima42':"
-            grep -rl "gy-oshima42" ./release --exclude-dir=node_modules || true
+          if [ -f release/server.js ]; then
+            echo "✅ server.js found in release folder"
+            echo "First 20 lines of server.js:"
+            head -20 release/server.js
           else
-            echo "✅✅✅ OK: The wrong URL was NOT found in the final build files."
+            echo "❌ CRITICAL: server.js NOT found in release folder!"
+            echo "Contents of release:"
+            find release -type f
+            exit 1
           fi
-        continue-on-error: true
-
-      # 環境変数の最終確認
-      - name: '🔍 [DIAGNOSTIC] Verify environment variables'
-        env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-        run: |
-          echo "=========================================="
-          echo "Final verification of environment variables:"
-          echo "NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}"
-          echo "Length: ${#NEXT_PUBLIC_API_URL} characters"
-          echo "=========================================="
 
       - name: 'Upload artifact for deployment job'
         uses: actions/upload-artifact@v4
@@ -137,6 +114,17 @@ jobs:
           name: node-app
           path: ./release
       
+      - name: '🔍 Verify downloaded artifact'
+        run: |
+          echo "Contents of downloaded artifact:"
+          ls -la ./release/
+          if [ -f ./release/server.js ]; then
+            echo "✅ server.js present in artifact"
+          else
+            echo "❌ server.js missing in artifact!"
+            exit 1
+          fi
+      
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
@@ -149,6 +137,7 @@ jobs:
       - name: '✅ Deployment complete'
         run: |
           echo "=========================================="
-          echo "Deployment completed successfully!"
+          echo "Deployment completed!"
           echo "App URL: ${{ steps.deploy-to-webapp.outputs.webapp-url }}"
+          echo "Wait 2-3 minutes for the app to start..."
           echo "=========================================="
