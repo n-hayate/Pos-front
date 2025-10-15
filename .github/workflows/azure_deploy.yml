@@ -1,4 +1,3 @@
-# Frontend用 GitHub Actions ワークフロー
 name: Build and Deploy Next.js App to Azure
 
 on:
@@ -35,13 +34,38 @@ jobs:
           echo "=========================================="
           npm run build
 
-      - name: 'Assemble artifact for deployment'
+      - name: 'Prepare deployment package'
         run: |
-          mkdir -p release/.next
-          cp -r .next/standalone/* release/
-          cp -r .next/static release/.next/static
-          cp -r public release/public
-          ls -la release/
+          echo "Creating release directory..."
+          mkdir -p release
+          
+          # standaloneの内容を全てコピー
+          echo "Copying standalone build..."
+          cp -r .next/standalone/. release/
+          
+          # staticファイルをコピー
+          echo "Copying static files..."
+          mkdir -p release/.next/static
+          cp -r .next/static/. release/.next/static/
+          
+          # publicフォルダをコピー
+          echo "Copying public directory..."
+          cp -r public release/
+          
+          # package.jsonをコピー
+          echo "Copying package.json..."
+          cp package.json release/
+          
+          # 構成確認
+          echo "Release directory structure:"
+          ls -laR release/ | head -50
+          
+          # server.jsの確認
+          if [ -f release/server.js ]; then
+            echo "✓ server.js found"
+          else
+            echo "✗ WARNING: server.js not found!"
+          fi
 
       - name: 'Upload artifact for deployment job'
         uses: actions/upload-artifact@v4
@@ -62,6 +86,17 @@ jobs:
         with:
           name: node-app
           path: ./release
+
+      - name: 'Verify artifact contents'
+        run: |
+          echo "Artifact contents:"
+          ls -la release/
+          if [ -f release/server.js ]; then
+            echo "✓ server.js present in artifact"
+          else
+            echo "✗ ERROR: server.js missing in artifact"
+            exit 1
+          fi
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
