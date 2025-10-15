@@ -1,72 +1,82 @@
 // app/lib/api.ts
 import type { Product, PurchaseRequest, PurchaseResponse } from "@/app/types";
 
-// 環境変数の取得と正規化
+// API URLの取得と検証
 const getApiUrl = (): string => {
-  const raw = process.env.NEXT_PUBLIC_API_URL || "";
+  const raw = process.env.NEXT_PUBLIC_API_URL;
   
   if (!raw) {
-    throw new Error("NEXT_PUBLIC_API_URL is not defined");
+    throw new Error("環境変数 NEXT_PUBLIC_API_URL が設定されていません");
   }
   
-  // httpsプロトコルがない場合は追加
+  // httpsが含まれていない場合は追加
   const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
   
-  // 末尾のスラッシュを除去
+  // 末尾のスラッシュを削除
   return withProto.replace(/\/$/, "");
 };
 
 const API_URL = getApiUrl();
 
-// デバッグ用（開発環境でのみログ出力）
-if (process.env.NODE_ENV === 'development') {
-  console.log('API_URL:', API_URL);
+// 開発環境でのログ出力
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  console.log('[API] URL:', API_URL);
 }
 
-// 商品検索API
+/**
+ * 商品検索API
+ */
 export async function searchProduct(code: string): Promise<{ product: Product | null }> {
   const url = `${API_URL}/search_product`;
   
-  console.log('Searching product at:', url);
-  
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { 
-      "Content-Type": "application/json",
-      "Accept": "application/json"
-    },
-    body: JSON.stringify({ code }),
-  });
-  
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error('Search API Error:', errorText);
-    throw new Error(`Search API ${res.status}: ${errorText}`);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({ code }),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error('[API Error]', errorText);
+      throw new Error(`商品検索API Error ${res.status}: ${errorText}`);
+    }
+
+    return res.json();
+  } catch (error: any) {
+    console.error('[商品検索エラー]', error);
+    throw new Error(error.message || '商品検索中にエラーが発生しました');
   }
-  
-  return res.json();
 }
 
-// 購入API
+/**
+ * 購入API
+ */
 export async function purchaseItems(payload: PurchaseRequest): Promise<PurchaseResponse> {
   const url = `${API_URL}/purchase`;
   
-  console.log('Purchasing items at:', url);
-  
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { 
-      "Content-Type": "application/json",
-      "Accept": "application/json"
-    },
-    body: JSON.stringify(payload),
-  });
-  
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error('Purchase API Error:', errorText);
-    throw new Error(`Purchase API ${res.status}: ${errorText}`);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error('[API Error]', errorText);
+      throw new Error(`購入API Error ${res.status}: ${errorText}`);
+    }
+
+    return res.json();
+  } catch (error: any) {
+    console.error('[購入エラー]', error);
+    throw new Error(error.message || '購入処理中にエラーが発生しました');
   }
-  
-  return res.json();
 }
