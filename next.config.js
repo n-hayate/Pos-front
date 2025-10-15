@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Azure App Serviceでのデプロイに必要
   output: 'standalone',
   
-  // 環境変数のログ出力（開発時のデバッグ用）
   webpack: (config, { isServer }) => {
     if (isServer && process.env.NODE_ENV === 'development') {
       console.log('========================================');
