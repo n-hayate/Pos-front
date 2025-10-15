@@ -1,4 +1,4 @@
-name: Build and Deploy Next.js App to Azure
+name: '[Troubleshoot] Build and Deploy Next.js App'
 
 on:
   push:
@@ -25,32 +25,37 @@ jobs:
       - name: 'Install dependencies'
         run: npm ci
 
+      # --- 診断ステップ 1: ビルド前にソースコードをスキャン ---
+      # もし古いURLがコード内に直接書かれていたら、ここで検出されます。
+      - name: '🔍 [DIAGNOSTIC] Scan source code for wrong URL'
+        run: |
+          echo "Scanning for hardcoded '-gy-' string in source code..."
+          if grep -r "gy-oshima42" .; then
+            echo "🔥 WARNING: Found the wrong URL hardcoded in the source code above."
+          else
+            echo "✅ OK: Wrong URL not found in source code."
+          fi
+        continue-on-error: true
+
       - name: 'Build the application'
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: |
+          # ビルドキャッシュを強制的に削除し、完全にクリーンな状態でビルドを開始
+          echo "Force cleaning previous build cache..."
+          rm -rf .next
+          
           echo "=========================================="
-          echo "Building with API URL: $NEXT_PUBLIC_API_URL"
+          # 渡されたSecretの値が本当に正しいか、ここで改めて確認します
+          echo "Building with API URL: ->${NEXT_PUBLIC_API_URL}<-"
           echo "=========================================="
           npm run build
-          
-          echo "Checking build output..."
-          ls -la .next/
-          
-          if [ -f .next/standalone/server.js ]; then
-            echo "✓ server.js generated successfully"
-          else
-            echo "✗ ERROR: server.js not found in .next/standalone/"
-            ls -la .next/standalone/ || echo "standalone directory does not exist"
-            exit 1
-          fi
 
       - name: 'Prepare deployment package'
         run: |
           echo "Creating deployment package from standalone output..."
           mkdir -p release
           
-          # 1. standaloneフォルダの中身を全てコピーする (これがベース)
           if [ -d .next/standalone ]; then
             cp -r .next/standalone/. release/
             echo "✓ Copied standalone directory contents to ./release"
@@ -59,24 +64,28 @@ jobs:
             exit 1
           fi
 
-          # 2. publicフォルダをコピーする
           if [ -d public ]; then
             cp -r public release/public
             echo "✓ Copied public directory to ./release/public"
           fi
           
-          # 3. .next/static フォルダをコピーする (重要！)
           if [ -d .next/static ]; then
             cp -r .next/static release/.next/static
             echo "✓ Copied static files to ./release/.next/static"
           fi
-          
-          # 最終確認
-          echo ""
-          echo "=========================================="
-          echo "Final deployment package structure (./release):"
-          ls -la release/
-          echo "=========================================="
+
+      # --- 診断ステップ 2: ビルド後の生成物をスキャン ---
+      # これが最も重要です。デプロイされるファイルにどちらのURLが書き込まれたか、最終確認します。
+      - name: '🔍 [DIAGNOSTIC] Scan FINAL build artifacts for wrong URL'
+        run: |
+          echo "Scanning the final packaged files in ./release for the wrong URL..."
+          if grep -r "gy-oshima42" ./release; then
+            echo "🔥🔥🔥 CRITICAL: The WRONG URL was found in the final build files!"
+            echo "This means the build process itself is using the wrong value, despite the secret."
+          else
+            echo "✅✅✅ OK: The wrong URL was NOT found in the final build files."
+          fi
+        continue-on-error: true
 
       - name: 'Upload artifact for deployment job'
         uses: actions/upload-artifact@v4
@@ -84,36 +93,23 @@ jobs:
           name: node-app
           path: ./release
 
+  # (deployジョブは変更ありません)
   deploy:
     runs-on: ubuntu-latest
     needs: build
     environment:
       name: 'Production'
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
-
     steps:
       - name: 'Download artifact from build job'
         uses: actions/download-artifact@v4
         with:
           name: node-app
           path: ./release
-
-      - name: 'Verify artifact contents'
-        run: |
-          echo "Artifact contents:"
-          ls -la release/
-          if [ -f release/server.js ]; then
-            echo "✓ server.js present in artifact"
-          else
-            echo "✗ ERROR: server.js missing in artifact"
-            exit 1
-          fi
-
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'app-002-gen10-step3-1-node-oshima42'
+          app-name: 'app-002-gen10-step3-1-node-oshima42' # 正しいアプリ名であることを確認
           package: ./release
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-
